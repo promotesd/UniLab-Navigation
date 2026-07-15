@@ -169,9 +169,9 @@ class DiffDrivePointGoalEnv(NpEnv):
             previous_distance=old_distance,
             current_distance=current_distance,
             reached_goal=reached_goal,
-            progress_scale=self._cfg.progress_reward_scale,
-            success_bonus=self._cfg.success_bonus,
-            time_penalty=self._cfg.time_penalty,
+            progress_scale=self._cfg.reward_config.progress_scale,
+            success_bonus=self._cfg.reward_config.success_bonus,
+            time_penalty=self._cfg.reward_config.time_penalty,
         )
 
         self.previous_distance[:] = current_distance

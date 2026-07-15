@@ -8,6 +8,15 @@ from unilab.base.base import EnvCfg
 from unilab.base.scene import SceneCfg
 
 
+@dataclass
+class PointGoalRewardConfig:
+    """Reward shaping parameters for PointGoal navigation."""
+
+    progress_scale: float = 2.0
+    success_bonus: float = 10.0
+    time_penalty: float = 0.01
+
+
 @registry.envcfg("DiffDrivePointGoal")
 @dataclass
 class DiffDrivePointGoalCfg(EnvCfg):
@@ -46,10 +55,10 @@ class DiffDrivePointGoalCfg(EnvCfg):
     wheel_track: float = 0.32
     max_wheel_speed: float = 20.0
 
-    # Reward parameters.
-    progress_reward_scale: float = 2.0
-    success_bonus: float = 10.0
-    time_penalty: float = 0.01
+    # Reward parameters injected from Hydra during training.
+    reward_config: PointGoalRewardConfig = field(
+        default_factory=PointGoalRewardConfig
+    )
 
     def validate(self) -> None:
         """Reject invalid task configurations before environment creation."""
@@ -108,11 +117,17 @@ class DiffDrivePointGoalCfg(EnvCfg):
         if self.max_angular_velocity <= 0.0:
             raise ValueError("max_angular_velocity must be positive")
 
-        if self.progress_reward_scale < 0.0:
-            raise ValueError("progress_reward_scale must be non-negative")
+        if self.reward_config.progress_scale < 0.0:
+            raise ValueError(
+                "reward_config.progress_scale must be non-negative"
+            )
 
-        if self.success_bonus < 0.0:
-            raise ValueError("success_bonus must be non-negative")
+        if self.reward_config.success_bonus < 0.0:
+            raise ValueError(
+                "reward_config.success_bonus must be non-negative"
+            )
 
-        if self.time_penalty < 0.0:
-            raise ValueError("time_penalty must be non-negative")
+        if self.reward_config.time_penalty < 0.0:
+            raise ValueError(
+                "reward_config.time_penalty must be non-negative"
+            )
