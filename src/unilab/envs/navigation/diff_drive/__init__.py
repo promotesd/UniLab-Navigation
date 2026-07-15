@@ -9,6 +9,7 @@ from .point_goal_core import (
     is_goal_reached,
 )
 from .point_goal_env import DiffDrivePointGoalEnv
+from .wheel_control import twist_to_wheel_speeds
 
 __all__ = [
     "DiffDrivePointGoalCfg",
@@ -19,4 +20,5 @@ __all__ = [
     "differential_drive_step",
     "is_goal_reached",
     "wrap_angle",
+    "twist_to_wheel_speeds",
 ]

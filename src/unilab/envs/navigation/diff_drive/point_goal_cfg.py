@@ -41,6 +41,11 @@ class DiffDrivePointGoalCfg(EnvCfg):
     max_linear_velocity: float = 0.5
     max_angular_velocity: float = 1.5
 
+    # Differential-drive geometry and actuator limits.
+    wheel_radius: float = 0.08
+    wheel_track: float = 0.32
+    max_wheel_speed: float = 20.0
+
     # Reward parameters.
     progress_reward_scale: float = 2.0
     success_bonus: float = 10.0
@@ -77,6 +82,28 @@ class DiffDrivePointGoalCfg(EnvCfg):
 
         if self.max_linear_velocity <= 0.0:
             raise ValueError("max_linear_velocity must be positive")
+
+        if self.wheel_radius <= 0.0:
+            raise ValueError("wheel_radius must be positive")
+
+        if self.wheel_track <= 0.0:
+            raise ValueError("wheel_track must be positive")
+
+        if self.max_wheel_speed <= 0.0:
+            raise ValueError("max_wheel_speed must be positive")
+
+        required_wheel_speed = (
+            self.max_linear_velocity
+            + 0.5
+            * self.wheel_track
+            * self.max_angular_velocity
+        ) / self.wheel_radius
+
+        if required_wheel_speed > self.max_wheel_speed:
+            raise ValueError(
+                "max_wheel_speed is too small for the configured "
+                "linear and angular velocity limits"
+            )
 
         if self.max_angular_velocity <= 0.0:
             raise ValueError("max_angular_velocity must be positive")
