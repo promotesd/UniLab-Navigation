@@ -28,14 +28,29 @@ def test_diff_drive_point_goal_timing() -> None:
     assert cfg.max_episode_steps == 200
 
 
-def test_diff_drive_point_goal_rejects_invalid_distance() -> None:
+def test_diff_drive_point_goal_rejects_min_distance_inside_tolerance() -> None:
     cfg = DiffDrivePointGoalCfg(
         goal_tolerance=1.0,
-        max_goal_distance=0.5,
+        min_goal_distance=0.5,
+        max_goal_distance=5.0,
     )
 
     with pytest.raises(
         ValueError,
-        match="max_goal_distance must be greater than goal_tolerance",
+        match="min_goal_distance must be greater than goal_tolerance",
+    ):
+        cfg.validate()
+
+
+def test_diff_drive_point_goal_rejects_max_distance_below_min_distance() -> None:
+    cfg = DiffDrivePointGoalCfg(
+        goal_tolerance=0.25,
+        min_goal_distance=2.0,
+        max_goal_distance=1.0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="max_goal_distance must be greater than min_goal_distance",
     ):
         cfg.validate()
