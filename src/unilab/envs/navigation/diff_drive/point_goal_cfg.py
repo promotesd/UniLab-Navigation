@@ -1,15 +1,28 @@
 """Configuration for differential-drive PointGoal navigation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from unilab.assets import ASSETS_ROOT_PATH
 from unilab.base import registry
 from unilab.base.base import EnvCfg
+from unilab.base.scene import SceneCfg
 
 
 @registry.envcfg("DiffDrivePointGoal")
 @dataclass
 class DiffDrivePointGoalCfg(EnvCfg):
     """Configuration shared by differential-drive PointGoal environments."""
+
+    scene: SceneCfg = field(
+        default_factory=lambda: SceneCfg(
+            model_file=str(
+                ASSETS_ROOT_PATH
+                / "robots"
+                / "diff_drive"
+                / "scene.xml"
+            )
+        )
+    )
 
     # Reproducible random reset sampling.
     seed: int = 1
