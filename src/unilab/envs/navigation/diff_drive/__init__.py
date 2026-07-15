@@ -9,11 +9,13 @@ from .point_goal_core import (
     is_goal_reached,
 )
 from .point_goal_env import DiffDrivePointGoalEnv
+from .point_goal_mujoco_env import DiffDrivePointGoalMujocoEnv
 from .wheel_control import twist_to_wheel_speeds
 
 __all__ = [
     "DiffDrivePointGoalCfg",
     "DiffDrivePointGoalEnv",
+    "DiffDrivePointGoalMujocoEnv",
     "build_point_goal_observation",
     "compute_point_goal_metrics",
     "compute_point_goal_reward",

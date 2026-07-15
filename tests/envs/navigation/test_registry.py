@@ -18,7 +18,7 @@ def test_diff_drive_point_goal_config_is_registered() -> None:
     )
 
     # The MuJoCo environment implementation will be added in the next milestone.
-    assert registered_envs["DiffDrivePointGoal"]["available_backends"] == []
+    assert registered_envs["DiffDrivePointGoal"]["available_backends"] == ["mujoco"]
 
 
 def test_diff_drive_point_goal_timing() -> None:
