@@ -246,3 +246,105 @@ def test_partial_reset_only_changes_selected_environments() -> None:
     assert info[
         "distance_to_goal"
     ].shape == (1,)
+
+
+def test_mujoco_env_emits_success_episode_log() -> None:
+    """A reached goal must produce one metric value per episode."""
+    env = make_env(num_envs=2)
+    state = env.init_state()
+
+    # Place both goals exactly at the current robot positions.
+    env.goals[:] = env.robot_states[:, 0:2]
+
+    env.initial_distance[:] = np.array(
+        [2.0, 3.0],
+        dtype=np.float32,
+    )
+
+    env.previous_distance[:] = env.initial_distance
+
+    state.info["steps"][:] = np.array(
+        [9, 19],
+        dtype=np.uint32,
+    )
+
+    updated_state = env.update_state(state)
+
+    assert np.all(updated_state.terminated)
+    assert "log" in updated_state.info
+
+    log = updated_state.info["log"]
+
+    np.testing.assert_allclose(
+        log["Navigation/success_rate"],
+        np.array([1.0, 1.0]),
+    )
+
+    np.testing.assert_allclose(
+        log["Navigation/timeout_rate"],
+        np.array([0.0, 0.0]),
+    )
+
+    np.testing.assert_allclose(
+        log["Navigation/final_distance"],
+        np.array([0.0, 0.0]),
+        atol=1.0e-6,
+    )
+
+    np.testing.assert_allclose(
+        log["Navigation/episode_length"],
+        np.array([10.0, 20.0]),
+    )
+
+
+def test_mujoco_env_emits_timeout_episode_log() -> None:
+    """An unfinished episode at the limit must be logged as timeout."""
+    env = make_env(num_envs=2)
+    state = env.init_state()
+
+    env.goals[:] = (
+        env.robot_states[:, 0:2]
+        + np.array(
+            [
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+    )
+
+    env.initial_distance[:] = np.array(
+        [2.0, 3.0],
+        dtype=np.float32,
+    )
+
+    env.previous_distance[:] = env.initial_distance
+
+    assert env.cfg.max_episode_steps is not None
+
+    state.info["steps"][:] = (
+        env.cfg.max_episode_steps - 1
+    )
+
+    updated_state = env.update_state(state)
+
+    assert not np.any(updated_state.terminated)
+    assert "log" in updated_state.info
+
+    log = updated_state.info["log"]
+
+    np.testing.assert_allclose(
+        log["Navigation/success_rate"],
+        np.array([0.0, 0.0]),
+    )
+
+    np.testing.assert_allclose(
+        log["Navigation/timeout_rate"],
+        np.array([1.0, 1.0]),
+    )
+
+    np.testing.assert_allclose(
+        log["Navigation/episode_length"],
+        np.array([200.0, 200.0]),
+    )
+

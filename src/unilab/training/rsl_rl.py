@@ -194,7 +194,17 @@ class RslRlVecEnvWrapper:
             self.episode_lengths[done_idx] = 0
 
         if "log" in state.info:
-            infos["log"] = state.info["log"]
+            raw_log = state.info["log"]
+
+            if isinstance(raw_log, dict):
+                infos["log"] = {
+                    key: (
+                        to_torch(value, self.device)
+                        if isinstance(value, np.ndarray)
+                        else value
+                    )
+                    for key, value in raw_log.items()
+                }
 
         return (
             self._obs_to_tensordict(state.obs, getattr(state, "info", None)),

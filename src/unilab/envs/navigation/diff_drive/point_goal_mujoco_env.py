@@ -132,6 +132,12 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
 
         observation = self._build_observation()
 
+        self._update_episode_log(
+            state=state,
+            current_distance=current_distance,
+            reached_goal=reached_goal,
+        )
+
         state.info["distance_to_goal"] = current_distance.copy()
         state.info["goal_reached"] = reached_goal.copy()
         state.info["robot_state"] = self.robot_states.copy()
@@ -237,6 +243,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         )
 
         self.previous_distance[indices] = distance
+        self.initial_distance[indices] = distance
 
         observation = self._build_observation(
             indices

@@ -134,3 +134,82 @@ def test_wrapper_runs_multiple_physics_steps() -> None:
 
     assert robot_states.shape == (8, 3)
     assert np.all(np.isfinite(robot_states))
+
+
+def test_wrapper_converts_episode_log_to_torch() -> None:
+    """Episode metrics must reach RSL-RL as Torch tensors."""
+    wrapped_env = make_wrapped_env(
+        num_envs=4,
+    )
+
+    wrapped_env.reset()
+
+    base_env = wrapped_env.env
+
+    # Force every environment to reach its goal on this step.
+    base_env.goals[:] = base_env.robot_states[:, 0:2]
+    base_env.initial_distance[:] = 1.0
+    base_env.previous_distance[:] = 1.0
+
+    # Linear action -1 maps to zero forward speed.
+    actions = torch.tensor(
+        [
+            [-1.0, 0.0],
+            [-1.0, 0.0],
+            [-1.0, 0.0],
+            [-1.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    _, _, dones, info = wrapped_env.step(actions)
+
+    assert torch.all(dones)
+    assert "log" in info
+
+    log = info["log"]
+
+    assert isinstance(log, dict)
+
+    success_rate = log[
+        "Navigation/success_rate"
+    ]
+
+    final_distance = log[
+        "Navigation/final_distance"
+    ]
+
+    assert isinstance(
+        success_rate,
+        torch.Tensor,
+    )
+
+    assert isinstance(
+        final_distance,
+        torch.Tensor,
+    )
+
+    assert success_rate.shape == (4,)
+    assert final_distance.shape == (4,)
+
+    assert success_rate.dtype == torch.float32
+    assert final_distance.dtype == torch.float32
+
+    assert torch.allclose(
+        success_rate,
+        torch.ones(4),
+    )
+
+    # A real MuJoCo step can introduce a very small displacement
+    # through contact solving and numerical integration. Navigation
+    # success therefore means being inside the configured tolerance,
+    # not being exactly zero metres from the goal.
+    assert torch.all(
+        final_distance
+        <= base_env.cfg.goal_tolerance
+    )
+
+    assert torch.all(
+        torch.isfinite(final_distance)
+    )
+

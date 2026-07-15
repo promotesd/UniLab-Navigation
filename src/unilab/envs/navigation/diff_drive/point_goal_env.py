@@ -11,6 +11,7 @@ from unilab.base.backend import SimBackend
 from unilab.base.np_env import NpEnv, NpEnvState
 from unilab.dtype_config import get_global_dtype
 
+from .episode_metrics import build_point_goal_episode_log
 from .kinematics import differential_drive_step
 from .point_goal_cfg import DiffDrivePointGoalCfg
 from .point_goal_core import (
@@ -70,6 +71,13 @@ class DiffDrivePointGoalEnv(NpEnv):
         )
 
         self.previous_distance = np.zeros(
+            (num_envs,),
+            dtype=dtype,
+        )
+
+        # Distance sampled at the beginning of each episode.
+        # This remains unchanged until that environment is reset.
+        self.initial_distance = np.zeros(
             (num_envs,),
             dtype=dtype,
         )
@@ -178,6 +186,12 @@ class DiffDrivePointGoalEnv(NpEnv):
 
         observation = self._build_observation()
 
+        self._update_episode_log(
+            state=state,
+            current_distance=current_distance,
+            reached_goal=reached_goal,
+        )
+
         state.info["distance_to_goal"] = current_distance.copy()
         state.info["goal_reached"] = reached_goal.copy()
         state.info["robot_state"] = self.robot_states.copy()
@@ -253,6 +267,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         )
 
         self.previous_distance[indices] = distance
+        self.initial_distance[indices] = distance
 
         observation = self._build_observation(indices)
 
@@ -267,6 +282,41 @@ class DiffDrivePointGoalEnv(NpEnv):
             "obs": observation,
             "critic": observation.copy(),
         }, info
+
+    def _update_episode_log(
+        self,
+        *,
+        state: NpEnvState,
+        current_distance: np.ndarray,
+        reached_goal: np.ndarray,
+    ) -> None:
+        """Publish metrics for episodes completed on this step."""
+        max_episode_steps = self._cfg.max_episode_steps
+
+        if max_episode_steps is None:
+            state.info.pop("log", None)
+            return
+
+        # NpEnv increments state.info["steps"] after update_state().
+        # Therefore +1 represents the action that has just completed.
+        episode_steps = np.asarray(
+            state.info["steps"],
+        ) + 1
+
+        episode_log = build_point_goal_episode_log(
+            initial_distance=self.initial_distance,
+            final_distance=current_distance,
+            reached_goal=reached_goal,
+            episode_steps=episode_steps,
+            max_episode_steps=int(max_episode_steps),
+        )
+
+        if episode_log is None:
+            # Prevent metrics from a previous terminal step from being
+            # emitted again on the following environment step.
+            state.info.pop("log", None)
+        else:
+            state.info["log"] = episode_log
 
     def _build_observation(
         self,
