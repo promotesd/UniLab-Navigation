@@ -283,6 +283,77 @@ class DiffDrivePointGoalEnv(NpEnv):
             "critic": observation.copy(),
         }, info
 
+    def reset_to_initial_conditions(
+        self,
+        robot_states: np.ndarray,
+        goals: np.ndarray,
+    ) -> NpEnvState:
+        """Reset the full vectorized environment to explicit episode starts.
+
+        This evaluator-facing reset bypasses random sampling so multiple
+        policies can run exactly the same initial-condition manifest.
+        """
+        states = np.asarray(robot_states, dtype=get_global_dtype())
+        goal_array = np.asarray(goals, dtype=get_global_dtype())
+        expected_state_shape = (self.num_envs, 3)
+        expected_goal_shape = (self.num_envs, 2)
+
+        if states.shape != expected_state_shape:
+            raise ValueError(
+                f"robot_states must have shape {expected_state_shape}, got {states.shape}"
+            )
+        if goal_array.shape != expected_goal_shape:
+            raise ValueError(f"goals must have shape {expected_goal_shape}, got {goal_array.shape}")
+        if not np.all(np.isfinite(states)) or not np.all(np.isfinite(goal_array)):
+            raise ValueError("initial conditions must contain only finite values")
+
+        distances, _ = compute_point_goal_metrics(states, goal_array)
+        if np.any(distances < self._cfg.min_goal_distance) or np.any(
+            distances > self._cfg.max_goal_distance
+        ):
+            raise ValueError(
+                "initial goal distances must be inside the configured "
+                "[min_goal_distance, max_goal_distance] range"
+            )
+
+        if self._state is None:
+            self.init_state()
+        assert self._state is not None
+
+        self._set_initial_conditions(states, goal_array)
+        distances, _ = compute_point_goal_metrics(self.robot_states, self.goals)
+        self.normalized_actions.fill(0.0)
+        self.velocity_commands.fill(0.0)
+        self.previous_distance[:] = distances
+        self.initial_distance[:] = distances
+
+        observation = self._build_observation()
+        info: dict[str, Any] = {
+            "steps": np.zeros(self.num_envs, dtype=np.uint32),
+            "distance_to_goal": distances.copy(),
+            "goal_reached": np.zeros(self.num_envs, dtype=bool),
+            "robot_state": self.robot_states.copy(),
+            "goal_position": self.goals.copy(),
+        }
+        self._state = self._state.replace(
+            obs={"obs": observation, "critic": observation.copy()},
+            reward=np.zeros(self.num_envs, dtype=get_global_dtype()),
+            terminated=np.zeros(self.num_envs, dtype=bool),
+            truncated=np.zeros(self.num_envs, dtype=bool),
+            info=info,
+            final_observation=None,
+        )
+        return self._state
+
+    def _set_initial_conditions(
+        self,
+        robot_states: np.ndarray,
+        goals: np.ndarray,
+    ) -> None:
+        """Install validated conditions in the backend-independent state."""
+        self.robot_states[:] = robot_states
+        self.goals[:] = goals
+
     def _update_episode_log(
         self,
         *,

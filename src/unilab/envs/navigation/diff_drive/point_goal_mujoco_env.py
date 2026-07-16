@@ -304,3 +304,19 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         self.robot_states[env_indices, 2] = (
             base_yaw[env_indices]
         )
+
+    def _set_initial_conditions(
+        self,
+        robot_states: np.ndarray,
+        goals: np.ndarray,
+    ) -> None:
+        """Install explicit evaluator starts in the real MuJoCo backend."""
+        qpos = np.tile(self._home_qpos, (self.num_envs, 1))
+        qvel = np.tile(self._home_qvel, (self.num_envs, 1))
+        qpos[:, 0:2] = robot_states[:, 0:2]
+        qpos[:, 3:7] = np_yaw_to_quat(robot_states[:, 2])
+        indices = np.arange(self.num_envs, dtype=np.int32)
+        self._backend.set_state(indices, qpos, qvel)
+        self._sync_robot_states_from_backend()
+        self.goals[:] = goals
+        self.wheel_commands.fill(0.0)

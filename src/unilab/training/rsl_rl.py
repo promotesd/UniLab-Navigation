@@ -151,6 +151,14 @@ class RslRlVecEnvWrapper:
             td_dict["critic"] = to_torch(obs["critic"], self.device)
         return TensorDict(td_dict, batch_size=self.num_envs, device=self.device)
 
+    def observations_to_tensordict(
+        self,
+        obs: dict[str, Any],
+        info: dict[str, Any] | None = None,
+    ) -> TensorDict:
+        """Convert evaluator-owned observations to the PPO inference contract."""
+        return self._obs_to_tensordict(obs, info)
+
     def _resolve_final_observation(self, state: NpEnvState) -> dict[str, Any] | None:
         if isinstance(state.final_observation, dict):
             return state.final_observation
