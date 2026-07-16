@@ -3,7 +3,10 @@
 import pytest
 
 import unilab.base.registry as registry
-from unilab.envs.navigation.diff_drive import DiffDrivePointGoalCfg
+from unilab.envs.navigation.diff_drive import (
+    DiffDrivePointGoalCfg,
+    DiffDrivePointGoalObstaclesCfg,
+)
 
 
 def test_diff_drive_point_goal_config_is_registered() -> None:
@@ -26,6 +29,13 @@ def test_diff_drive_point_goal_timing() -> None:
 
     assert cfg.sim_substeps == 10
     assert cfg.max_episode_steps == 200
+
+
+def test_diff_drive_obstacle_point_goal_config_is_registered() -> None:
+    registry.ensure_registries()
+    assert registry.list_registered_envs()["DiffDrivePointGoalObstacles"][
+        "config_class"
+    ] == DiffDrivePointGoalObstaclesCfg.__name__
 
 
 def test_diff_drive_point_goal_rejects_min_distance_inside_tolerance() -> None:

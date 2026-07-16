@@ -1,0 +1,13 @@
+<mujoco model="diff_drive_point_goal_obstacle">
+    <include file="scene.xml"/>
+
+    <worldbody>
+        <geom
+            name="static_obstacle"
+            type="box"
+            pos="2.0 0 0.50"
+            size="0.35 0.75 0.50"
+            rgba="0.80 0.25 0.12 1"
+        />
+    </worldbody>
+</mujoco>

@@ -196,6 +196,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         state.info["goal_reached"] = reached_goal.copy()
         state.info["robot_state"] = self.robot_states.copy()
         state.info["goal_position"] = self.goals.copy()
+        state.info.update(self._build_task_info())
 
         return state.replace(
             obs={
@@ -239,24 +240,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             size=count,
         )
 
-        goal_distance = self._rng.uniform(
-            self._cfg.min_goal_distance,
-            self._cfg.max_goal_distance,
-            size=count,
-        )
-
-        goal_angle = self._rng.uniform(
-            -np.pi,
-            np.pi,
-            size=count,
-        )
-
-        self.goals[indices, 0] = (
-            goal_distance * np.cos(goal_angle)
-        )
-        self.goals[indices, 1] = (
-            goal_distance * np.sin(goal_angle)
-        )
+        self.goals[indices] = self._sample_goal_positions(self.robot_states[indices, :2])
 
         self.normalized_actions[indices] = 0.0
         self.velocity_commands[indices] = 0.0
@@ -276,6 +260,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             "goal_reached": np.zeros(count, dtype=bool),
             "robot_state": self.robot_states[indices].copy(),
             "goal_position": self.goals[indices].copy(),
+            **self._build_task_info(indices),
         }
 
         return {
@@ -315,6 +300,7 @@ class DiffDrivePointGoalEnv(NpEnv):
                 "initial goal distances must be inside the configured "
                 "[min_goal_distance, max_goal_distance] range"
             )
+        self._validate_initial_conditions(states, goal_array)
 
         if self._state is None:
             self.init_state()
@@ -334,6 +320,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             "goal_reached": np.zeros(self.num_envs, dtype=bool),
             "robot_state": self.robot_states.copy(),
             "goal_position": self.goals.copy(),
+            **self._build_task_info(),
         }
         self._state = self._state.replace(
             obs={"obs": observation, "critic": observation.copy()},
@@ -353,6 +340,31 @@ class DiffDrivePointGoalEnv(NpEnv):
         """Install validated conditions in the backend-independent state."""
         self.robot_states[:] = robot_states
         self.goals[:] = goals
+
+    def _validate_initial_conditions(
+        self,
+        robot_states: np.ndarray,
+        goals: np.ndarray,
+    ) -> None:
+        """Validate variant-specific explicit evaluator starts."""
+        del robot_states, goals
+
+    def _sample_goal_positions(self, origins: np.ndarray) -> np.ndarray:
+        """Sample goals relative to planar origins using the task distribution."""
+        distances = self._rng.uniform(
+            self._cfg.min_goal_distance,
+            self._cfg.max_goal_distance,
+            size=len(origins),
+        )
+        angles = self._rng.uniform(-np.pi, np.pi, size=len(origins))
+        return origins + np.stack(
+            [distances * np.cos(angles), distances * np.sin(angles)], axis=1
+        )
+
+    def _build_task_info(self, env_indices: np.ndarray | None = None) -> dict[str, Any]:
+        """Return variant-specific backend-independent task state."""
+        del env_indices
+        return {}
 
     def _update_episode_log(
         self,

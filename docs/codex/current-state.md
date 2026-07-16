@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M6.1 static obstacle navigation
+- Earliest incomplete milestone after this update: M6.2 collision semantics
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -236,12 +236,42 @@ ad210b37cfa4cdb8212dca2e9795272eaf588909064aa58ba55b5db6275ee02f  analysis JSON
 The 3.9 MiB trajectory report and generated analysis/visualization remain under
 `/tmp` and are not committed.
 
-## Next milestone: M6.1 static obstacle navigation
+## M6.1 static obstacle navigation
+
+Status: complete.
+
+Delivered:
+
+- separate `DiffDrivePointGoalObstacles` registry/config/task variant;
+- composed real MuJoCo scene with a static box centered at `(2.0, 0.0)` and
+  planar half-extents `(0.35, 0.75) m`;
+- vectorized axis-aligned point/clearance geometry;
+- bounded vectorized rejection sampling for obstacle-clear goals;
+- validation that fixed and evaluator-provided starts/goals do not overlap the
+  configured obstacle clearance;
+- backend-independent obstacle centers and half-extents in reset/step task info;
+- dedicated Hydra task composition with training seed interpolation;
+- unchanged obstacle-free `DiffDrivePointGoal` task contract.
+
+Bounded real MuJoCo heuristic smoke:
+
+```text
+episodes: 128
+success rate: 0.8828125
+timeout rate: 0.1171875
+```
+
+The heuristic has no obstacle observation and M6.1 intentionally has no
+collision termination yet. Its 11.7% timeout rate is therefore expected
+baseline behavior, not a collision metric or obstacle-avoidance claim.
+
+## Next milestone: M6.2 collision semantics
 
 Required work:
 
-- add a real static-obstacle MuJoCo scene and separately named task variant;
-- preserve the obstacle-free PointGoal contract;
-- sample valid starts/goals without obstacle overlap;
-- expose obstacle layout through backend-independent task state;
-- add unit and real MuJoCo integration tests before collision semantics in M6.2.
+- detect robot/obstacle contacts from real MuJoCo state;
+- define collision termination separately from success and timeout;
+- emit per-episode collision rate before autoreset;
+- add configurable collision penalty without changing obstacle-free rewards;
+- test success, timeout, collision, and same-step precedence;
+- update fixed-episode evaluation and trajectory reports with collision metrics.

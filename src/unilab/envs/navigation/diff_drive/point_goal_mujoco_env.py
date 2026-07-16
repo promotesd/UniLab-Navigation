@@ -143,6 +143,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         state.info["robot_state"] = self.robot_states.copy()
         state.info["goal_position"] = self.goals.copy()
         state.info["wheel_commands"] = self.wheel_commands.copy()
+        state.info.update(self._build_task_info())
 
         return state.replace(
             obs={
@@ -211,27 +212,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             indices
         )
 
-        goal_distance = self._rng.uniform(
-            self._cfg.min_goal_distance,
-            self._cfg.max_goal_distance,
-            size=count,
-        )
-
-        goal_angle = self._rng.uniform(
-            -np.pi,
-            np.pi,
-            size=count,
-        )
-
-        self.goals[indices, 0] = (
-            self.robot_states[indices, 0]
-            + goal_distance * np.cos(goal_angle)
-        )
-
-        self.goals[indices, 1] = (
-            self.robot_states[indices, 1]
-            + goal_distance * np.sin(goal_angle)
-        )
+        self.goals[indices] = self._sample_goal_positions(self.robot_states[indices, :2])
 
         self.normalized_actions[indices] = 0.0
         self.velocity_commands[indices] = 0.0
@@ -264,6 +245,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             "wheel_commands": self.wheel_commands[
                 indices
             ].copy(),
+            **self._build_task_info(indices),
         }
 
         return {
