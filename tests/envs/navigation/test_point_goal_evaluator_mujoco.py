@@ -63,6 +63,8 @@ def test_real_mujoco_fixed_evaluator_compares_same_episodes() -> None:
     assert zero["episode_count"] == heuristic["episode_count"] == 2
     assert zero["timeout_rate"] == 1.0
     assert heuristic["progress_ratio"]["mean"] > zero["progress_ratio"]["mean"]
+    assert zero["path_length"]["mean"] < 0.01
+    assert heuristic["spl"]["mean"] > 0.9
     assert report["policies"]["zero"]["manifest_sha256"] == report["policies"][
         "heuristic"
     ]["manifest_sha256"]

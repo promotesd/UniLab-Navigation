@@ -26,6 +26,8 @@ def result(seed: int, iteration: int, success: float) -> dict:
             "progress_ratio": distribution,
             "episode_length": distribution,
             "successful_episode_length": distribution,
+            "path_length": distribution,
+            "spl": distribution,
         },
     }
 

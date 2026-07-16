@@ -162,6 +162,7 @@ def evaluate_point_goal_policy(
     manifest: PointGoalManifest,
     *,
     policy_name: str,
+    record_trajectories: bool = False,
 ) -> dict[str, Any]:
     """Evaluate one policy once per manifest row without autoreset."""
     if env.num_envs != manifest.episode_count:
@@ -186,11 +187,44 @@ def evaluate_point_goal_policy(
     success = np.zeros(manifest.episode_count, dtype=bool)
     timeout = np.zeros(manifest.episode_count, dtype=bool)
     active = np.ones(manifest.episode_count, dtype=bool)
+    previous_positions = manifest.robot_states[:, :2].astype(np.float64, copy=True)
+    path_length = np.zeros(manifest.episode_count, dtype=np.float64)
+    trajectories: list[list[dict[str, Any]]] | None = None
+    if record_trajectories:
+        trajectories = [
+            [
+                {
+                    "step": 0,
+                    "robot_state": manifest.robot_states[episode_id].tolist(),
+                    "distance_to_goal": float(initial_distance[episode_id]),
+                }
+            ]
+            for episode_id in range(manifest.episode_count)
+        ]
 
     for _ in range(int(max_episode_steps)):
         actions = _validate_actions(policy(state.obs), manifest.episode_count)
         actions[~active] = STATIONARY_ACTION
+        active_before_step = active.copy()
         state = env.step(actions)
+        robot_states = np.asarray(state.info["robot_state"])
+        current_positions = robot_states[:, :2]
+        path_length[active_before_step] += np.linalg.norm(
+            current_positions[active_before_step] - previous_positions[active_before_step],
+            axis=1,
+        )
+        previous_positions[active_before_step] = current_positions[active_before_step]
+        if trajectories is not None:
+            distances = np.asarray(state.info["distance_to_goal"])
+            steps = np.asarray(state.info["steps"])
+            for episode_id in np.flatnonzero(active_before_step):
+                trajectories[int(episode_id)].append(
+                    {
+                        "step": int(steps[episode_id]),
+                        "robot_state": robot_states[episode_id].tolist(),
+                        "distance_to_goal": float(distances[episode_id]),
+                    }
+                )
         done_now = active & (state.terminated | state.truncated)
         if np.any(done_now):
             final_distance[done_now] = np.asarray(state.info["distance_to_goal"])[done_now]
@@ -208,6 +242,10 @@ def evaluate_point_goal_policy(
     progress_ratio = (initial_distance - final_distance) / np.maximum(
         initial_distance, np.finfo(np.float32).eps
     )
+    shortest_path = initial_distance.astype(np.float64)
+    spl = success.astype(np.float64) * shortest_path / np.maximum(
+        path_length, shortest_path
+    )
     episodes = [
         {
             "episode_id": episode_id,
@@ -217,6 +255,13 @@ def evaluate_point_goal_policy(
             "final_distance": float(final_distance[episode_id]),
             "progress_ratio": float(progress_ratio[episode_id]),
             "episode_length": int(episode_length[episode_id]),
+            "path_length": float(path_length[episode_id]),
+            "spl": float(spl[episode_id]),
+            **(
+                {"trajectory": trajectories[episode_id]}
+                if trajectories is not None
+                else {}
+            ),
         }
         for episode_id in range(manifest.episode_count)
     ]
@@ -229,6 +274,8 @@ def evaluate_point_goal_policy(
         "progress_ratio": _distribution(progress_ratio),
         "episode_length": _distribution(episode_length),
         "successful_episode_length": _distribution(episode_length[success]),
+        "path_length": _distribution(path_length),
+        "spl": _distribution(spl),
     }
     return {
         "policy": policy_name,
@@ -245,6 +292,8 @@ def evaluate_point_goal_policies(
     env_factory: Callable[[], Any],
     policy_factories: Mapping[str, PolicyFactory],
     manifest: PointGoalManifest,
+    *,
+    record_trajectories: bool = False,
 ) -> dict[str, Any]:
     """Evaluate policy factories on fresh environments and one shared manifest."""
     if not policy_factories:
@@ -255,7 +304,11 @@ def evaluate_point_goal_policies(
         try:
             policy = policy_factory(env)
             results[policy_name] = evaluate_point_goal_policy(
-                env, policy, manifest, policy_name=policy_name
+                env,
+                policy,
+                manifest,
+                policy_name=policy_name,
+                record_trajectories=record_trajectories,
             )
         finally:
             env.close()
@@ -266,7 +319,7 @@ def format_point_goal_summary(report: Mapping[str, Any]) -> str:
     """Format the aggregate metrics as a human-readable console table."""
     header = (
         "policy     episodes success timeout initial_dist final_dist progress "
-        "ep_len success_len"
+        "ep_len path_len spl success_len"
     )
     rows = [header]
     policies = report.get("policies", {})
@@ -284,6 +337,7 @@ def format_point_goal_summary(report: Mapping[str, Any]) -> str:
             f"{metrics['success_rate']:>7.3f} {metrics['timeout_rate']:>7.3f} "
             f"{mean_std('initial_distance'):>12} {mean_std('final_distance'):>12} "
             f"{mean_std('progress_ratio'):>12} {mean_std('episode_length'):>12} "
+            f"{mean_std('path_length'):>12} {mean_std('spl'):>12} "
             f"{mean_std('successful_episode_length'):>12}"
         )
     return "\n".join(rows)

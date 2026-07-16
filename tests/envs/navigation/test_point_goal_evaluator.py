@@ -131,6 +131,8 @@ def test_all_policy_factories_share_one_manifest_and_emit_requested_metrics() ->
         "progress_ratio",
         "episode_length",
         "successful_episode_length",
+        "path_length",
+        "spl",
     }
     for result in report["policies"].values():
         assert result["manifest_sha256"] == manifest_hash
@@ -169,6 +171,29 @@ def test_successful_episode_length_filters_to_successes() -> None:
     assert metrics["success_rate"] == 1.0
     assert metrics["timeout_rate"] == 0.0
     assert metrics["successful_episode_length"]["mean"] == metrics["episode_length"]["mean"]
+    assert metrics["path_length"]["mean"] == pytest.approx(0.75)
+    assert metrics["spl"]["mean"] == pytest.approx(1.0)
+
+
+def test_trajectory_recording_stops_at_each_first_terminal_step() -> None:
+    env = make_env(num_envs=2, max_episode_seconds=2.0)
+    manifest = PointGoalManifest(
+        seed=1,
+        robot_states=np.array([[0.0, 0.0, 0.0], [0.0, 0.0, np.pi]], dtype=np.float32),
+        goals=np.array([[1.0, 0.0], [-1.0, 0.0]], dtype=np.float32),
+    )
+    result = evaluate_point_goal_policy(
+        env,
+        HeuristicPointGoalPolicy(),
+        manifest,
+        policy_name="heuristic",
+        record_trajectories=True,
+    )
+    for episode in result["episodes"]:
+        trajectory = episode["trajectory"]
+        assert trajectory[0]["step"] == 0
+        assert trajectory[-1]["step"] == episode["episode_length"]
+        assert len(trajectory) == episode["episode_length"] + 1
 
 
 def test_report_has_console_summary_and_strict_json(tmp_path) -> None:

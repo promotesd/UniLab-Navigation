@@ -22,12 +22,17 @@ from .ppo_sweep import (
     format_ppo_sweep_summary,
     parse_ppo_checkpoint_spec,
 )
+from .trajectory_analysis import (
+    analyze_point_goal_trajectories,
+    write_point_goal_trajectory_svg,
+)
 
 __all__ = [
     "PointGoalManifest",
     "PpoCheckpointSpec",
     "PpoPointGoalPolicy",
     "aggregate_ppo_checkpoint_results",
+    "analyze_point_goal_trajectories",
     "build_point_goal_ppo_policy_factory",
     "evaluate_point_goal_policies",
     "evaluate_point_goal_policy",
@@ -40,4 +45,5 @@ __all__ = [
     "read_point_goal_manifest",
     "write_point_goal_manifest",
     "write_point_goal_report",
+    "write_point_goal_trajectory_svg",
 ]

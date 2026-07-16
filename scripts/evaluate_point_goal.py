@@ -51,6 +51,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-episode-seconds", type=float)
     parser.add_argument(
+        "--record-trajectories",
+        action="store_true",
+        help="Include terminal-safe per-step robot states in the JSON report.",
+    )
+    parser.add_argument(
         "--manifest-input",
         type=Path,
         help="Reuse a standalone manifest or a manifest embedded in a prior report.",
@@ -178,12 +183,18 @@ def main() -> None:
                 device=args.device,
             )
 
-    evaluation = evaluate_point_goal_policies(env_factory, policy_factories, manifest)
+    evaluation = evaluate_point_goal_policies(
+        env_factory,
+        policy_factories,
+        manifest,
+        record_trajectories=args.record_trajectories,
+    )
     report = {
         "schema_version": 1,
         "git_sha": _git_sha(),
         "config": task_config,
         "checkpoint": str(args.checkpoint.resolve()) if args.checkpoint else None,
+        "trajectories_recorded": bool(args.record_trajectories),
         **evaluation,
     }
     for policy_name, result in report["policies"].items():

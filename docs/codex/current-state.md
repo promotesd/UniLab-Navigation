@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M5.5 trajectory analysis
+- Earliest incomplete milestone after this update: M6.1 static obstacle navigation
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -176,12 +176,72 @@ SHA-256. Its file SHA-256 is:
 Checkpoints, TensorBoard events, run metadata, and the 18 MiB raw evaluation
 report remain under `/tmp` and are not committed.
 
-## Next milestone: M5.5 trajectory analysis
+## M5.5 trajectory and path-efficiency analysis
+
+Status: complete.
+
+The fixed-episode evaluator now computes path length and SPL for every policy,
+whether or not raw trajectories are retained. Optional trajectory recording
+stores the initial state and one sample after each active step, then stops at
+the first terminal step so no post-terminal motion contaminates the path.
+
+Real analysis protocol:
+
+- policy: PPO seed 3, iteration 25;
+- held-out episodes: 128 from manifest seed 1001;
+- checkpoint selection: declared in advance because its formal 4,096-episode
+  success was below 100%, allowing real success and failure analysis;
+- success: 127/128 (`0.9922`);
+- timeout: 1/128 (`0.0078`);
+- mean path length: `3.0904 ± 1.0623 m`;
+- mean SPL: `0.9098 ± 0.1621`;
+- mean episode length: `116.2344 ± 39.6746` steps.
+
+Representative selection is deterministic and declared rather than visual
+cherry-picking:
+
+- successful trajectories: lower median SPL over all successes;
+- failed trajectories: lower median progress ratio over all failures;
+- all raw episodes remain in the source report.
+
+For this run the selected success was episode 9 (`path=4.685 m`, `SPL=1.0`),
+and the selected failure was episode 14 (`path=2.346 m`, `SPL=0.0`, progress
+ratio `0.7519`). The SVG displays both complete paths, starts, and goals.
+
+Commands:
+
+```bash
+uv run python scripts/evaluate_point_goal.py \
+  --manifest-input /tmp/point_goal_m53_manifest_128.json \
+  --policies ppo \
+  --checkpoint /tmp/unilab_m54_formal_logs/DiffDrivePointGoal/2026-07-16_18-52-55_mujoco/model_25.pt \
+  --device cuda \
+  --record-trajectories \
+  --output /tmp/point_goal_m55_ppo_seed3_iter25_trajectories.json
+
+uv run python scripts/analyze_point_goal_trajectories.py \
+  --input /tmp/point_goal_m55_ppo_seed3_iter25_trajectories.json \
+  --output /tmp/point_goal_m55_trajectory_analysis.json \
+  --svg /tmp/point_goal_m55_trajectory_analysis.svg
+```
+
+Artifact SHA-256 values:
+
+```text
+e22ab2eb7ac9267db95f19c8ed0dcc95bf191a52e5181222922d2d07106b677e  trajectory report
+ad210b37cfa4cdb8212dca2e9795272eaf588909064aa58ba55b5db6275ee02f  analysis JSON
+744072122a1e8bf42a418f419c3e884d1ebe5346b54f8b843eb6da8231af2f83  SVG
+```
+
+The 3.9 MiB trajectory report and generated analysis/visualization remain under
+`/tmp` and are not committed.
+
+## Next milestone: M6.1 static obstacle navigation
 
 Required work:
 
-- record terminal-safe trajectories for successful and failed episodes;
-- compute path length and SPL where applicable;
-- retain trajectory episode IDs and initial conditions;
-- add machine-readable trajectory summaries and bounded visualization output;
-- compare representative successful and failed behavior without cherry-picking.
+- add a real static-obstacle MuJoCo scene and separately named task variant;
+- preserve the obstacle-free PointGoal contract;
+- sample valid starts/goals without obstacle overlap;
+- expose obstacle layout through backend-independent task state;
+- add unit and real MuJoCo integration tests before collision semantics in M6.2.

@@ -17,6 +17,8 @@ _DISTRIBUTION_METRICS = (
     "progress_ratio",
     "episode_length",
     "successful_episode_length",
+    "path_length",
+    "spl",
 )
 
 
