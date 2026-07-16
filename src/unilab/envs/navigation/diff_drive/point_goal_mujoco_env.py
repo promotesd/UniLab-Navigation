@@ -108,6 +108,11 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         old_distance = self.previous_distance.copy()
 
         self._sync_robot_states_from_backend()
+        self.localization_time_s += self._cfg.ctrl_dt
+        self.pose_estimate = self.pose_provider.update(
+            self.robot_states,
+            self.localization_time_s,
+        )
 
         current_distance, _ = compute_point_goal_metrics(
             self.robot_states,
@@ -148,6 +153,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         state.info["goal_position"] = self.goals.copy()
         state.info["wheel_commands"] = self.wheel_commands.copy()
         state.info.update(self._build_task_info())
+        state.info.update(self._build_localization_info())
 
         return state.replace(
             obs={
@@ -216,6 +222,12 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             self.robot_states[indices, :2],
             env_indices=indices,
         )
+        self.localization_time_s[indices] = 0.0
+        self.pose_estimate = self.pose_provider.reset(
+            self.robot_states,
+            self.localization_time_s,
+            indices,
+        )
 
         self.normalized_actions[indices] = 0.0
         self.velocity_commands[indices] = 0.0
@@ -250,6 +262,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
                 indices
             ].copy(),
             **self._build_task_info(indices),
+            **self._build_localization_info(indices),
         }
 
         return {

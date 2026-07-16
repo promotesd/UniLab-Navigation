@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M8.1 pose-provider contract
+- Earliest incomplete milestone after this update: M8.2 dead-reckoning provider
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -488,12 +488,47 @@ aggregate SHA-256: 4ac72220133380d7f5d0449b4cbfd46c4fc75345235ce8718c955a8cfc424
 All TD3 logs, checkpoints, TensorBoard files, reports, and aggregate evidence
 remain under `/tmp` and are not committed.
 
-## Next milestone: M8.1 pose-provider contract
+## M8.1 ground-truth pose-provider contract
+
+Status: complete.
+
+Delivered:
+
+- backend-independent `PoseProvider` protocol with reset and update operations;
+- validated batched `PoseEstimate` containing planar pose, symmetric positive
+  semidefinite covariance, validity, health status, timestamps, and parent/child
+  frames;
+- explicit `UNINITIALIZED`, `TRACKING`, `DEGRADED`, and `LOST` status values with
+  validity/status consistency checks;
+- monotonic timestamp validation with per-environment reset exceptions;
+- `GroundTruthPoseProvider` that copies simulator pose, emits zero covariance,
+  and reports `map -> base_link` tracking;
+- PointGoal observation construction routed through provider pose while reward,
+  success, collision, episode metrics, and physical LiDAR remain tied to task
+  truth;
+- provider state exposed in reset and step info for downstream adapters;
+- biased-provider tests proving localization error changes observations without
+  contaminating true task metrics;
+- real MuJoCo equivalence, frame, covariance, status, and timestamp coverage.
+
+Validation:
+
+```text
+Ruff: clean
+complete navigation suite: 133 passed
+real evaluator smoke: 128 episodes, 1.0 success, 0.0 timeout
+JSON: /tmp/unilab_m81_ground_truth_provider_smoke.json
+JSON SHA-256: 01c327d5e968cabf1eeef1a56c24e424155de6549d1f13663bbc95e50700d68a
+```
+
+The smoke JSON remains under `/tmp` and is not committed.
+
+## Next milestone: M8.2 dead-reckoning provider
 
 Required work:
 
-- define pose, covariance, validity/status, timestamp, and frame contracts;
-- route ground-truth pose through the provider without changing behavior;
-- let navigation observations consume provider output instead of direct
-  simulator truth;
-- add backend-independent unit tests and real MuJoCo integration coverage.
+- define wheel-odometry/control packets separately from simulator pose;
+- integrate planar dead reckoning with deterministic noise and drift;
+- preserve reset, timestamp, covariance, validity, and frame contracts;
+- demonstrate observation degradation without changing task truth;
+- add fixed-seed analytical and real MuJoCo tests.

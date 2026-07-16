@@ -10,6 +10,10 @@ import numpy as np
 from unilab.base.backend import SimBackend
 from unilab.base.np_env import NpEnv, NpEnvState
 from unilab.dtype_config import get_global_dtype
+from unilab.envs.navigation.localization import (
+    GroundTruthPoseProvider,
+    PoseProvider,
+)
 
 from .episode_metrics import build_point_goal_episode_log
 from .kinematics import differential_drive_step
@@ -37,6 +41,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         cfg: DiffDrivePointGoalCfg,
         backend: SimBackend,
         num_envs: int = 1,
+        pose_provider: PoseProvider | None = None,
     ) -> None:
         cfg.validate()
         super().__init__(cfg, backend, num_envs)
@@ -50,6 +55,14 @@ class DiffDrivePointGoalEnv(NpEnv):
         self.robot_states = np.zeros(
             (num_envs, 3),
             dtype=dtype,
+        )
+        self.localization_time_s = np.zeros(num_envs, dtype=np.float64)
+        self.pose_provider = pose_provider or GroundTruthPoseProvider()
+        all_indices = np.arange(num_envs, dtype=np.int32)
+        self.pose_estimate = self.pose_provider.reset(
+            self.robot_states,
+            self.localization_time_s,
+            all_indices,
         )
 
         # [goal_x, goal_y]
@@ -162,6 +175,11 @@ class DiffDrivePointGoalEnv(NpEnv):
             self.velocity_commands,
             dt=self._cfg.ctrl_dt,
         )
+        self.localization_time_s += self._cfg.ctrl_dt
+        self.pose_estimate = self.pose_provider.update(
+            self.robot_states,
+            self.localization_time_s,
+        )
 
         current_distance, _ = compute_point_goal_metrics(
             self.robot_states,
@@ -201,6 +219,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         state.info["robot_state"] = self.robot_states.copy()
         state.info["goal_position"] = self.goals.copy()
         state.info.update(self._build_task_info())
+        state.info.update(self._build_localization_info())
 
         return state.replace(
             obs={
@@ -248,6 +267,12 @@ class DiffDrivePointGoalEnv(NpEnv):
             self.robot_states[indices, :2],
             env_indices=indices,
         )
+        self.localization_time_s[indices] = 0.0
+        self.pose_estimate = self.pose_provider.reset(
+            self.robot_states,
+            self.localization_time_s,
+            indices,
+        )
 
         self.normalized_actions[indices] = 0.0
         self.velocity_commands[indices] = 0.0
@@ -269,6 +294,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             "robot_state": self.robot_states[indices].copy(),
             "goal_position": self.goals[indices].copy(),
             **self._build_task_info(indices),
+            **self._build_localization_info(indices),
         }
 
         return {
@@ -315,6 +341,13 @@ class DiffDrivePointGoalEnv(NpEnv):
         assert self._state is not None
 
         self._set_initial_conditions(states, goal_array)
+        self.localization_time_s.fill(0.0)
+        all_indices = np.arange(self.num_envs, dtype=np.int32)
+        self.pose_estimate = self.pose_provider.reset(
+            self.robot_states,
+            self.localization_time_s,
+            all_indices,
+        )
         distances, _ = compute_point_goal_metrics(self.robot_states, self.goals)
         self.normalized_actions.fill(0.0)
         self.velocity_commands.fill(0.0)
@@ -330,6 +363,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             "robot_state": self.robot_states.copy(),
             "goal_position": self.goals.copy(),
             **self._build_task_info(),
+            **self._build_localization_info(),
         }
         self._state = self._state.replace(
             obs={"obs": observation, "critic": observation.copy()},
@@ -380,6 +414,23 @@ class DiffDrivePointGoalEnv(NpEnv):
         """Return variant-specific backend-independent task state."""
         del env_indices
         return {}
+
+    def _build_localization_info(
+        self,
+        env_indices: np.ndarray | None = None,
+    ) -> dict[str, Any]:
+        estimate = self.pose_estimate
+        indices = slice(None) if env_indices is None else env_indices
+        count = self.num_envs if env_indices is None else len(env_indices)
+        return {
+            "localization_pose": estimate.pose[indices].copy(),
+            "localization_covariance": estimate.covariance[indices].copy(),
+            "localization_valid": estimate.valid[indices].copy(),
+            "localization_status": estimate.status[indices].copy(),
+            "localization_timestamp_s": estimate.timestamp_s[indices].copy(),
+            "localization_parent_frame": np.full(count, estimate.parent_frame),
+            "localization_child_frame": np.full(count, estimate.child_frame),
+        }
 
     def _compute_collision_mask(self) -> np.ndarray:
         """Return task collision terminals; obstacle-free tasks have none."""
@@ -433,11 +484,11 @@ class DiffDrivePointGoalEnv(NpEnv):
     ) -> np.ndarray:
         """Build the five-dimensional bounded policy observation."""
         if env_indices is None:
-            states = self.robot_states
+            states = self.pose_estimate.pose
             goals = self.goals
             commands = self.velocity_commands
         else:
-            states = self.robot_states[env_indices]
+            states = self.pose_estimate.pose[env_indices]
             goals = self.goals[env_indices]
             commands = self.velocity_commands[env_indices]
 
