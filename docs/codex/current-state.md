@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M7.2 TD3 value gate
+- Earliest incomplete milestone after this update: M8.1 pose-provider contract
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -435,13 +435,65 @@ aggregate SHA-256: 24ae07f3cb21f9f3d30be31f7379bc4487b57029e03ff22a50abb41dba8eb
 Logs, checkpoints, TensorBoard files, evaluation JSON, and aggregate evidence
 remain under `/tmp` and are not committed.
 
-## Next milestone: M7.2 TD3 value gate
+## M7.2 TD3 adapter
+
+Status: complete; retained after the value gate.
+
+Independent value:
+
+- TD3 supplies a deterministic actor objective rather than SAC's stochastic
+  entropy-regularized objective;
+- target-policy smoothing and clipped double-Q updates provide a distinct
+  continuous-control baseline;
+- learned actor weights can be evaluated with a different environment count by
+  excluding only the per-environment exploration-noise buffer.
+
+Delivered:
+
+- formal FastTD3 Hydra task config on the unchanged `DiffDrivePointGoal` task;
+- native checkpoint/observation-normalizer restore and deterministic inference;
+- `td3` support in the shared fixed-episode evaluator CLI;
+- config, invalid-checkpoint, different-environment-count, deterministic action,
+  and real MuJoCo integration tests;
+- three formal training seeds and independent fixed-manifest evaluation.
+
+Formal experiment matches M7.1:
+
+- seeds: `1`, `2`, `3`;
+- iterations/checkpoint cadence: `101` / every `25`;
+- observed training steps per seed: `106,496`;
+- held-out episodes per seed: `4,096`;
+- manifest SHA-256:
+  `2e55e0f8a5eb492c3f1230be820582eb7a08ef0a258d0aa8d542c2a71aabb0e9`.
+
+| Seed | TD3 success | TD3 timeout | TD3 SPL mean |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.045898 | 0.954102 | 0.042205 |
+| 2 | 0.036133 | 0.963867 | 0.036012 |
+| 3 | 0.040039 | 0.959961 | 0.039984 |
+| mean ± std | 0.040690 ± 0.004013 | 0.959310 ± 0.004013 | 0.039400 ± 0.002562 |
+
+This short-budget TD3 baseline is more stable but weaker than SAC and far below
+PPO. It establishes an independently runnable adapter, not a performance claim.
+
+Validation and evidence:
+
+```text
+Ruff: clean
+complete navigation suite: 129 passed
+aggregate: /tmp/unilab_m72_td3_aggregate.json
+aggregate SHA-256: 4ac72220133380d7f5d0449b4cbfd46c4fc75345235ce8718c955a8cfc424af3
+```
+
+All TD3 logs, checkpoints, TensorBoard files, reports, and aggregate evidence
+remain under `/tmp` and are not committed.
+
+## Next milestone: M8.1 pose-provider contract
 
 Required work:
 
-- determine whether a PointGoal TD3 adapter adds independent experimental value
-  beyond SAC's deterministic evaluation path;
-- if retained, add a task config, native checkpoint adapter, fixed-episode CLI
-  support, training smoke, and shared-manifest evidence;
-- otherwise document the evidence-based reason for omitting it and continue to
-  localization/SLAM provider work.
+- define pose, covariance, validity/status, timestamp, and frame contracts;
+- route ground-truth pose through the provider without changing behavior;
+- let navigation observations consume provider output instead of direct
+  simulator truth;
+- add backend-independent unit tests and real MuJoCo integration coverage.

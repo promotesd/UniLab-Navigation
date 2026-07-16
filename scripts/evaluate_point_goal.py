@@ -37,6 +37,10 @@ from unilab.evaluation.point_goal_sac import (
     build_point_goal_sac_policy_factory,
     load_point_goal_sac_config,
 )
+from unilab.evaluation.point_goal_td3 import (
+    build_point_goal_td3_policy_factory,
+    load_point_goal_td3_config,
+)
 from unilab.training import BackendAdapter, create_env, ensure_registries
 
 
@@ -48,11 +52,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--policies",
         nargs="+",
-        choices=("zero", "random", "heuristic", "ppo", "sac"),
+        choices=("zero", "random", "heuristic", "ppo", "sac", "td3"),
         default=("zero", "random", "heuristic"),
     )
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--sac-checkpoint", type=Path)
+    parser.add_argument("--td3-checkpoint", type=Path)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-episode-seconds", type=float)
     parser.add_argument(
@@ -118,6 +123,8 @@ def main() -> None:
         raise ValueError("--checkpoint is required when --policies includes ppo")
     if "sac" in args.policies and args.sac_checkpoint is None:
         raise ValueError("--sac-checkpoint is required when --policies includes sac")
+    if "td3" in args.policies and args.td3_checkpoint is None:
+        raise ValueError("--td3-checkpoint is required when --policies includes td3")
 
     manifest = (
         read_point_goal_manifest(args.manifest_input) if args.manifest_input is not None else None
@@ -132,6 +139,7 @@ def main() -> None:
     ensure_registries()
     cfg = _load_config()
     sac_cfg = load_point_goal_sac_config(ROOT_DIR) if "sac" in args.policies else None
+    td3_cfg = load_point_goal_td3_config(ROOT_DIR) if "td3" in args.policies else None
     env_cfg_override = BackendAdapter(
         cfg, root_dir=ROOT_DIR, algo_name="ppo"
     ).build_task_env_cfg_override()
@@ -190,12 +198,20 @@ def main() -> None:
                 checkpoint=args.checkpoint.resolve(),
                 device=args.device,
             )
-        else:
+        elif policy_name == "sac":
             assert args.sac_checkpoint is not None
             assert sac_cfg is not None
             policy_factories[policy_name] = build_point_goal_sac_policy_factory(
                 sac_cfg,
                 checkpoint=args.sac_checkpoint.resolve(),
+                device=args.device,
+            )
+        else:
+            assert args.td3_checkpoint is not None
+            assert td3_cfg is not None
+            policy_factories[policy_name] = build_point_goal_td3_policy_factory(
+                td3_cfg,
+                checkpoint=args.td3_checkpoint.resolve(),
                 device=args.device,
             )
 
@@ -214,6 +230,9 @@ def main() -> None:
             "ppo": str(args.checkpoint.resolve()) if args.checkpoint else None,
             "sac": (
                 str(args.sac_checkpoint.resolve()) if args.sac_checkpoint else None
+            ),
+            "td3": (
+                str(args.td3_checkpoint.resolve()) if args.td3_checkpoint else None
             ),
         },
         "trajectories_recorded": bool(args.record_trajectories),
