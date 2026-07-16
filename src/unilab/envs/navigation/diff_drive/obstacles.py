@@ -12,7 +12,9 @@ from unilab.base import registry
 from unilab.base.scene import SceneCfg
 from unilab.dtype_config import get_global_dtype
 
+from .lidar import PlanarLidarCfg, PlanarLidarProvider
 from .point_goal_cfg import DiffDrivePointGoalCfg
+from .point_goal_env import DiffDrivePointGoalEnv
 from .point_goal_mujoco_env import DiffDrivePointGoalMujocoEnv
 
 
@@ -66,6 +68,7 @@ class DiffDrivePointGoalObstaclesCfg(DiffDrivePointGoalCfg):
     goal_sample_max_attempts: int = 128
     collision_force_threshold: float = 1.0e-6
     collision_penalty: float = 5.0
+    lidar: PlanarLidarCfg = field(default_factory=PlanarLidarCfg)
 
     def validate(self) -> None:
         super().validate()
@@ -82,6 +85,7 @@ class DiffDrivePointGoalObstaclesCfg(DiffDrivePointGoalCfg):
             raise ValueError("collision_force_threshold must be non-negative")
         if self.collision_penalty < 0.0:
             raise ValueError("collision_penalty must be non-negative")
+        self.lidar.validate()
 
 
 @registry.env("DiffDrivePointGoalObstacles", sim_backend="mujoco")
@@ -96,6 +100,9 @@ class DiffDrivePointGoalObstaclesMujocoEnv(DiffDrivePointGoalMujocoEnv):
         num_envs: int = 1,
         backend_type: str = "mujoco",
     ) -> None:
+        self.OBSERVATION_DIM = (
+            DiffDrivePointGoalEnv.OBSERVATION_DIM + cfg.lidar.beam_count
+        )
         super().__init__(cfg=cfg, num_envs=num_envs, backend_type=backend_type)
         dtype = get_global_dtype()
         centers = np.asarray(cfg.obstacle_centers, dtype=dtype)
@@ -106,6 +113,13 @@ class DiffDrivePointGoalObstaclesMujocoEnv(DiffDrivePointGoalMujocoEnv):
         self.obstacle_half_extents = np.broadcast_to(
             half_extents, (num_envs,) + half_extents.shape
         ).copy()
+        self._lidar = PlanarLidarProvider(cfg.lidar)
+        self.lidar_ranges = np.full(
+            (num_envs, cfg.lidar.beam_count), cfg.lidar.max_range, dtype=dtype
+        )
+        self.lidar_observation = np.ones(
+            (num_envs, cfg.lidar.beam_count), dtype=dtype
+        )
 
     def _sample_goal_positions(self, origins: np.ndarray) -> np.ndarray:
         cfg = self.cfg
@@ -146,10 +160,39 @@ class DiffDrivePointGoalObstaclesMujocoEnv(DiffDrivePointGoalMujocoEnv):
         else:
             centers = self.obstacle_centers[env_indices]
             half_extents = self.obstacle_half_extents[env_indices]
+        beam_angles = np.broadcast_to(
+            self._lidar.beam_angles,
+            (len(centers), self._lidar.cfg.beam_count),
+        )
         return {
             "obstacle_centers": centers.copy(),
             "obstacle_half_extents": half_extents.copy(),
+            "lidar_ranges": (
+                self.lidar_ranges.copy()
+                if env_indices is None
+                else self.lidar_ranges[env_indices].copy()
+            ),
+            "lidar_beam_angles": beam_angles.copy(),
         }
+
+    def _build_observation(self, env_indices: np.ndarray | None = None) -> np.ndarray:
+        point_goal = super()._build_observation(env_indices)
+        if env_indices is None:
+            states = self.robot_states
+            centers = self.obstacle_centers
+            half_extents = self.obstacle_half_extents
+        else:
+            states = self.robot_states[env_indices]
+            centers = self.obstacle_centers[env_indices]
+            half_extents = self.obstacle_half_extents[env_indices]
+        ranges, normalized = self._lidar.scan(states, centers, half_extents)
+        if env_indices is None:
+            self.lidar_ranges[:] = ranges
+            self.lidar_observation[:] = normalized
+        else:
+            self.lidar_ranges[env_indices] = ranges
+            self.lidar_observation[env_indices] = normalized
+        return np.concatenate((point_goal, normalized), axis=1)
 
     def _compute_collision_mask(self) -> np.ndarray:
         cfg = self.cfg

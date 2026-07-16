@@ -50,6 +50,22 @@ def test_registry_creates_separately_named_obstacle_task() -> None:
     env.close()
 
 
+def test_registry_applies_nested_lidar_override_and_observation_shape() -> None:
+    registry.ensure_registries()
+    env = registry.make(
+        "DiffDrivePointGoalObstacles",
+        sim_backend="mujoco",
+        env_cfg_override={"lidar": {"beam_count": 8, "noise_seed": 19}},
+        num_envs=2,
+    )
+    assert env.cfg.lidar.beam_count == 8
+    assert env.cfg.lidar.noise_seed == 19
+    assert env.obs_groups_spec == {"obs": 13, "critic": 13}
+    state = env.init_state()
+    assert state.obs["obs"].shape == (2, 13)
+    env.close()
+
+
 def test_hydra_composes_static_obstacle_training_task() -> None:
     config_dir = Path(__file__).parents[3] / "conf" / "ppo"
     with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):
@@ -60,6 +76,8 @@ def test_hydra_composes_static_obstacle_training_task() -> None:
     assert cfg.training.task_name == "DiffDrivePointGoalObstacles"
     assert cfg.training.sim_backend == "mujoco"
     assert cfg.env.seed == 23
+    assert cfg.env.lidar.beam_count == 16
+    assert cfg.env.lidar.noise_seed == 23
 
 
 def test_real_mujoco_scene_contains_matching_static_obstacle() -> None:
@@ -93,6 +111,37 @@ def test_real_mujoco_reset_samples_obstacle_clear_goals_and_exposes_layout() -> 
     next_state = env.step(np.tile(np.array([[-1.0, 0.0]]), (128, 1)))
     np.testing.assert_array_equal(
         next_state.info["obstacle_centers"], state.info["obstacle_centers"]
+    )
+    env.close()
+
+
+def test_real_mujoco_obstacle_task_exposes_normalized_fixed_beam_lidar() -> None:
+    cfg = DiffDrivePointGoalObstaclesCfg()
+    env = DiffDrivePointGoalObstaclesMujocoEnv(cfg=cfg, num_envs=1)
+    state = env.reset_to_initial_conditions(
+        np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        np.array([[4.0, 0.0]], dtype=np.float32),
+    )
+    forward_beam = cfg.lidar.beam_count // 2
+    assert state.obs["obs"].shape == (1, 5 + cfg.lidar.beam_count)
+    assert env.obs_groups_spec == {
+        "obs": 5 + cfg.lidar.beam_count,
+        "critic": 5 + cfg.lidar.beam_count,
+    }
+    assert state.info["lidar_ranges"].shape == (1, cfg.lidar.beam_count)
+    assert np.all(np.isfinite(state.obs["obs"]))
+    np.testing.assert_allclose(
+        state.info["lidar_ranges"][0, forward_beam],
+        2.0 - 0.35,
+        atol=1.0e-5,
+    )
+    expected_normalized = (2.0 - 0.35 - cfg.lidar.min_range) / (
+        cfg.lidar.max_range - cfg.lidar.min_range
+    )
+    np.testing.assert_allclose(
+        state.obs["obs"][0, 5 + forward_beam],
+        expected_normalized,
+        atol=1.0e-5,
     )
     env.close()
 

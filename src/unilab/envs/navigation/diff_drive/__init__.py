@@ -6,6 +6,7 @@ from .controllers import (
     ZeroPointGoalPolicy,
 )
 from .kinematics import differential_drive_step, wrap_angle
+from .lidar import PlanarLidarCfg, PlanarLidarProvider
 from .obstacles import (
     DiffDrivePointGoalObstaclesCfg,
     DiffDrivePointGoalObstaclesMujocoEnv,
@@ -29,6 +30,8 @@ __all__ = [
     "DiffDrivePointGoalObstaclesCfg",
     "DiffDrivePointGoalObstaclesMujocoEnv",
     "HeuristicPointGoalPolicy",
+    "PlanarLidarCfg",
+    "PlanarLidarProvider",
     "RandomPointGoalPolicy",
     "ZeroPointGoalPolicy",
     "build_point_goal_observation",

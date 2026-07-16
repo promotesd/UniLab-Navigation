@@ -34,3 +34,11 @@ reward:
 
 env:
   seed: ${algo.seed}
+  lidar:
+    beam_count: 16
+    angle_min: -3.141592653589793
+    angle_max: 3.141592653589793
+    min_range: 0.05
+    max_range: 5.0
+    noise_std: 0.0
+    noise_seed: ${algo.seed}

@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M6.3 LiDAR observation
+- Earliest incomplete milestone after this update: M6.4 valid randomization
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -296,12 +296,51 @@ The three terminal rates sum to one. The heuristic remains goal-directed and
 has no obstacle observation, so this run validates collision accounting rather
 than obstacle avoidance.
 
-## Next milestone: M6.3 LiDAR observation
+## M6.3 LiDAR observation
+
+Status: complete.
+
+Delivered:
+
+- backend-independent, vectorized planar ray/AABB intersection provider;
+- configurable fixed beam count, explicit relative angular interval, minimum and
+  maximum ranges, and seeded Gaussian sensor noise;
+- physical ranges clipped to the sensor interval and normalized policy ranges
+  mapping the minimum to zero and maximum/no-hit to one;
+- no validity mask because every configured ray has a valid finite clipped
+  reading, including no-hit rays;
+- `16` full-circle beams appended to the obstacle task's five PointGoal and
+  command features, yielding a fixed `21`-dimensional actor/critic observation;
+- raw ranges and batched beam angles in task info for inspection and adapters;
+- Hydra and nested registry overrides for sensor configuration;
+- analytical geometry, batching, clipping, rotation, deterministic-noise, and
+  validation tests plus real MuJoCo scene/observation integration tests;
+- a hot path vectorized over environments, beams, and obstacles without a
+  per-environment Python loop.
+
+Validation:
+
+```text
+Ruff: clean
+complete navigation suite: 120 passed
+real MuJoCo smoke: 128 environments, observation (128, 21), LiDAR (128, 16)
+LiDAR finite: true
+LiDAR observed range: [0.220247, 5.0] m
+```
+
+The real smoke reused the fixed seed-`61` obstacle manifest and preserved the
+M6.2 terminal rates (`0.859375` success, `0.140625` collision, `0.0` timeout),
+as expected because the existing goal-only heuristic does not yet consume the
+new beams.
+
+## Next milestone: M6.4 valid randomization
 
 Required work:
 
-- implement backend-independent fixed-beam range observations;
-- define angular range, clipping, normalization, validity, and deterministic
-  noise contracts;
-- add analytical geometry and real MuJoCo integration coverage;
-- keep the vectorized hot path free of per-environment Python loops.
+- randomize obstacle layouts without obstacle/obstacle, start/obstacle, or
+  goal/obstacle overlaps;
+- preserve fixed shapes and deterministic seed replay;
+- integrate configured LiDAR noise/randomization without backend-specific
+  observation changes;
+- update the heuristic baseline to use obstacle observations;
+- add analytical, real MuJoCo, and fixed-manifest evaluation evidence.
