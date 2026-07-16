@@ -11,8 +11,11 @@ from unilab.base.backend import SimBackend
 from unilab.base.np_env import NpEnv, NpEnvState
 from unilab.dtype_config import get_global_dtype
 from unilab.envs.navigation.localization import (
-    GroundTruthPoseProvider,
+    GroundTruthPosePacket,
+    LocalizationPacket,
     PoseProvider,
+    WheelOdometryPacket,
+    create_pose_provider,
 )
 
 from .episode_metrics import build_point_goal_episode_log
@@ -57,11 +60,23 @@ class DiffDrivePointGoalEnv(NpEnv):
             dtype=dtype,
         )
         self.localization_time_s = np.zeros(num_envs, dtype=np.float64)
-        self.pose_provider = pose_provider or GroundTruthPoseProvider()
+        self.pose_provider = pose_provider or create_pose_provider(cfg.localization)
         all_indices = np.arange(num_envs, dtype=np.int32)
         self.pose_estimate = self.pose_provider.reset(
-            self.robot_states,
-            self.localization_time_s,
+            LocalizationPacket(
+                ground_truth=GroundTruthPosePacket(
+                    timestamp_s=self.localization_time_s,
+                    pose=self.robot_states,
+                    child_frame=cfg.localization.child_frame,
+                ),
+                wheel_odometry=WheelOdometryPacket(
+                    timestamp_s=self.localization_time_s,
+                    dt_s=np.zeros(num_envs),
+                    linear_velocity=np.zeros(num_envs),
+                    angular_velocity=np.zeros(num_envs),
+                    frame_id=cfg.localization.child_frame,
+                ),
+            ),
             all_indices,
         )
 
@@ -177,8 +192,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         )
         self.localization_time_s += self._cfg.ctrl_dt
         self.pose_estimate = self.pose_provider.update(
-            self.robot_states,
-            self.localization_time_s,
+            self._build_localization_packet(self._cfg.ctrl_dt),
         )
 
         current_distance, _ = compute_point_goal_metrics(
@@ -269,8 +283,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         )
         self.localization_time_s[indices] = 0.0
         self.pose_estimate = self.pose_provider.reset(
-            self.robot_states,
-            self.localization_time_s,
+            self._build_localization_packet(0.0),
             indices,
         )
 
@@ -344,8 +357,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         self.localization_time_s.fill(0.0)
         all_indices = np.arange(self.num_envs, dtype=np.int32)
         self.pose_estimate = self.pose_provider.reset(
-            self.robot_states,
-            self.localization_time_s,
+            self._build_localization_packet(0.0),
             all_indices,
         )
         distances, _ = compute_point_goal_metrics(self.robot_states, self.goals)
@@ -431,6 +443,22 @@ class DiffDrivePointGoalEnv(NpEnv):
             "localization_parent_frame": np.full(count, estimate.parent_frame),
             "localization_child_frame": np.full(count, estimate.child_frame),
         }
+
+    def _build_localization_packet(self, dt_s: float) -> LocalizationPacket:
+        return LocalizationPacket(
+            ground_truth=GroundTruthPosePacket(
+                timestamp_s=self.localization_time_s,
+                pose=self.robot_states,
+                child_frame=self._cfg.localization.child_frame,
+            ),
+            wheel_odometry=WheelOdometryPacket(
+                timestamp_s=self.localization_time_s,
+                dt_s=np.full(self.num_envs, dt_s, dtype=np.float64),
+                linear_velocity=self.velocity_commands[:, 0],
+                angular_velocity=self.velocity_commands[:, 1],
+                frame_id=self._cfg.localization.child_frame,
+            ),
+        )
 
     def _compute_collision_mask(self) -> np.ndarray:
         """Return task collision terminals; obstacle-free tasks have none."""

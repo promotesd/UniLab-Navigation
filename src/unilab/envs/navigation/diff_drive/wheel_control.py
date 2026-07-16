@@ -87,3 +87,28 @@ def twist_to_wheel_speeds(
         )
 
     return wheel_speeds
+
+
+def wheel_speeds_to_twist(
+    wheel_speeds: np.ndarray,
+    *,
+    wheel_radius: float,
+    wheel_track: float,
+) -> np.ndarray:
+    """Convert measured left/right wheel speeds into body linear/angular velocity."""
+    speed_array = np.asarray(wheel_speeds)
+    if speed_array.ndim == 0 or speed_array.shape[-1] != 2:
+        raise ValueError("wheel_speeds must have shape (..., 2)")
+    if wheel_radius <= 0.0:
+        raise ValueError("wheel_radius must be positive")
+    if wheel_track <= 0.0:
+        raise ValueError("wheel_track must be positive")
+    if not np.all(np.isfinite(speed_array)):
+        raise ValueError("wheel_speeds must contain only finite values")
+    dtype = np.result_type(speed_array.dtype, np.float32)
+    speed_array = speed_array.astype(dtype, copy=False)
+    left = speed_array[..., 0]
+    right = speed_array[..., 1]
+    linear_velocity = 0.5 * wheel_radius * (left + right)
+    angular_velocity = wheel_radius * (right - left) / wheel_track
+    return np.stack((linear_velocity, angular_velocity), axis=-1)

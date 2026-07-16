@@ -5,10 +5,19 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from unilab.base import registry
 from unilab.envs.navigation import (
+    DeadReckoningCfg,
+    DeadReckoningPoseProvider,
+    GroundTruthPosePacket,
     GroundTruthPoseProvider,
+    LocalizationCfg,
+    LocalizationPacket,
+    NoisyPoseCfg,
+    NoisyPoseProvider,
     PoseEstimate,
     PoseStatus,
+    WheelOdometryPacket,
 )
 from unilab.envs.navigation.diff_drive import (
     DiffDrivePointGoalCfg,
@@ -23,15 +32,14 @@ class OffsetPoseProvider:
 
     def reset(
         self,
-        source_pose: np.ndarray,
-        timestamp_s: np.ndarray,
+        packet: LocalizationPacket,
         env_indices: np.ndarray,
     ) -> PoseEstimate:
         del env_indices
-        return self.update(source_pose, timestamp_s)
+        return self.update(packet)
 
-    def update(self, source_pose: np.ndarray, timestamp_s: np.ndarray) -> PoseEstimate:
-        pose = np.asarray(source_pose).copy()
+    def update(self, packet: LocalizationPacket) -> PoseEstimate:
+        pose = packet.ground_truth.pose.copy()
         pose[:, 1] += 1.0
         count = len(pose)
         return PoseEstimate(
@@ -39,10 +47,38 @@ class OffsetPoseProvider:
             covariance=np.broadcast_to(np.diag([0.1, 0.1, 0.05]), (count, 3, 3)),
             valid=np.ones(count, dtype=bool),
             status=np.full(count, PoseStatus.DEGRADED, dtype=np.uint8),
-            timestamp_s=timestamp_s,
+            timestamp_s=packet.ground_truth.timestamp_s,
             parent_frame="map",
             child_frame="base_link",
         )
+
+
+def packet(
+    timestamp: np.ndarray,
+    dt: np.ndarray,
+    linear: np.ndarray,
+    angular: np.ndarray,
+    truth: np.ndarray | None,
+    *,
+    parent_frame: str = "map",
+    child_frame: str = "base_link",
+) -> LocalizationPacket:
+    truth_pose = np.zeros((len(timestamp), 3), dtype=np.float32) if truth is None else truth
+    return LocalizationPacket(
+        ground_truth=GroundTruthPosePacket(
+            timestamp_s=timestamp,
+            pose=truth_pose,
+            parent_frame=parent_frame,
+            child_frame=child_frame,
+        ),
+        wheel_odometry=WheelOdometryPacket(
+            timestamp_s=timestamp,
+            dt_s=dt,
+            linear_velocity=linear,
+            angular_velocity=angular,
+            frame_id=child_frame,
+        ),
+    )
 
 
 def test_pose_estimate_rejects_inconsistent_validity_and_covariance() -> None:
@@ -66,17 +102,188 @@ def test_pose_estimate_rejects_inconsistent_validity_and_covariance() -> None:
         )
 
 
+def test_typed_packet_batch_rejects_timestamp_and_frame_mismatch() -> None:
+    truth = GroundTruthPosePacket(
+        timestamp_s=np.array([0.0]),
+        pose=np.zeros((1, 3)),
+    )
+    with pytest.raises(ValueError, match="timestamps must match"):
+        LocalizationPacket(
+            ground_truth=truth,
+            wheel_odometry=WheelOdometryPacket(
+                timestamp_s=np.array([0.1]),
+                dt_s=np.array([0.1]),
+                linear_velocity=np.zeros(1),
+                angular_velocity=np.zeros(1),
+            ),
+        )
+    with pytest.raises(ValueError, match="frames must match"):
+        LocalizationPacket(
+            ground_truth=truth,
+            wheel_odometry=WheelOdometryPacket(
+                timestamp_s=np.array([0.0]),
+                dt_s=np.array([0.0]),
+                linear_velocity=np.zeros(1),
+                angular_velocity=np.zeros(1),
+                frame_id="robot",
+            ),
+        )
+
+
+def test_localization_config_rejects_ambiguous_dead_reckoning_frame() -> None:
+    with pytest.raises(ValueError, match="odometry frame"):
+        LocalizationCfg(provider="dead_reckoning", parent_frame="map").validate()
+    with pytest.raises(ValueError, match="must be map"):
+        LocalizationCfg(provider="noisy_pose", parent_frame="odom").validate()
+
+
 def test_ground_truth_provider_copies_pose_and_validates_monotonic_time() -> None:
     provider = GroundTruthPoseProvider(parent_frame="odom", child_frame="robot")
     source = np.array([[1.0, 2.0, 0.5], [3.0, 4.0, -0.5]], dtype=np.float32)
-    estimate = provider.reset(source, np.zeros(2), np.array([0, 1], dtype=np.int32))
+    reset_packet = packet(
+        np.zeros(2),
+        np.zeros(2),
+        np.zeros(2),
+        np.zeros(2),
+        source,
+        parent_frame="odom",
+        child_frame="robot",
+    )
+    estimate = provider.reset(reset_packet, np.array([0, 1], dtype=np.int32))
     source.fill(0.0)
     np.testing.assert_array_equal(estimate.pose, [[1.0, 2.0, 0.5], [3.0, 4.0, -0.5]])
     np.testing.assert_array_equal(estimate.covariance, np.zeros((2, 3, 3)))
     assert estimate.parent_frame == "odom"
     assert estimate.child_frame == "robot"
+    provider.update(
+        packet(
+            np.array([0.2, 0.2]),
+            np.full(2, 0.2),
+            np.zeros(2),
+            np.zeros(2),
+            estimate.pose,
+            parent_frame="odom",
+            child_frame="robot",
+        )
+    )
     with pytest.raises(ValueError, match="monotonic"):
-        provider.update(estimate.pose, np.array([0.1, -0.1]))
+        provider.update(
+            packet(
+                np.array([0.1, 0.2]),
+                np.zeros(2),
+                np.zeros(2),
+                np.zeros(2),
+                estimate.pose,
+                parent_frame="odom",
+                child_frame="robot",
+            )
+        )
+
+
+def test_dead_reckoning_integrates_packets_without_reading_update_truth() -> None:
+    provider = DeadReckoningPoseProvider(DeadReckoningCfg())
+    initial = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+    provider.reset(
+        packet(np.array([0.0]), np.array([0.0]), np.array([0.0]), np.array([0.0]), initial),
+        np.array([0], dtype=np.int32),
+    )
+    estimate = provider.update(
+        packet(
+            np.array([1.0]),
+            np.array([1.0]),
+            np.array([1.0]),
+            np.array([0.0]),
+            np.array([[100.0, 100.0, 2.0]], dtype=np.float32),
+        )
+    )
+    np.testing.assert_allclose(estimate.pose, [[1.0, 0.0, 0.0]], atol=1.0e-6)
+    estimate = provider.update(
+        packet(
+            np.array([2.0]),
+            np.array([1.0]),
+            np.array([0.0]),
+            np.array([np.pi / 2]),
+            None,
+        )
+    )
+    np.testing.assert_allclose(estimate.pose, [[1.0, 0.0, np.pi / 2]], atol=1.0e-6)
+    assert estimate.parent_frame == "odom"
+
+
+def test_noisy_pose_is_seeded_reports_covariance_and_tracks_new_truth() -> None:
+    cfg = NoisyPoseCfg(
+        seed=23,
+        position_noise_std=0.1,
+        heading_noise_std=0.05,
+        x_bias=0.2,
+        heading_bias=0.1,
+    )
+    providers = [NoisyPoseProvider(cfg), NoisyPoseProvider(cfg)]
+    initial = np.zeros((3, 3), dtype=np.float32)
+    reset_packet = packet(
+        np.zeros(3),
+        np.zeros(3),
+        np.zeros(3),
+        np.zeros(3),
+        initial,
+    )
+    estimates = [
+        provider.reset(reset_packet, np.arange(3, dtype=np.int32))
+        for provider in providers
+    ]
+    np.testing.assert_array_equal(estimates[0].pose, estimates[1].pose)
+    np.testing.assert_allclose(estimates[0].covariance[:, 0, 0], 0.01)
+    np.testing.assert_allclose(estimates[0].covariance[:, 2, 2], 0.0025)
+    np.testing.assert_array_equal(
+        estimates[0].status,
+        np.full(3, PoseStatus.DEGRADED),
+    )
+
+    moved_truth = np.tile(np.array([[1.0, 2.0, 0.3]], dtype=np.float32), (3, 1))
+    update_packet = packet(
+        np.full(3, 0.1),
+        np.full(3, 0.1),
+        np.full(3, 99.0),
+        np.full(3, 99.0),
+        moved_truth,
+    )
+    updated = [provider.update(update_packet) for provider in providers]
+    np.testing.assert_array_equal(updated[0].pose, updated[1].pose)
+    assert np.all(updated[0].pose[:, 0] > 1.0)
+
+
+def test_dead_reckoning_noise_is_seeded_and_covariance_grows() -> None:
+    cfg = DeadReckoningCfg(
+        seed=17,
+        linear_velocity_noise_std=0.1,
+        angular_velocity_noise_std=0.05,
+        initial_position_variance=0.01,
+        initial_heading_variance=0.02,
+    )
+    providers = [DeadReckoningPoseProvider(cfg), DeadReckoningPoseProvider(cfg)]
+    initial = np.zeros((2, 3), dtype=np.float32)
+    reset_packet = packet(
+        np.zeros(2),
+        np.zeros(2),
+        np.zeros(2),
+        np.zeros(2),
+        initial,
+    )
+    update_packet = packet(
+        np.full(2, 0.5),
+        np.full(2, 0.5),
+        np.ones(2),
+        np.zeros(2),
+        None,
+    )
+    estimates = []
+    for provider in providers:
+        provider.reset(reset_packet, np.array([0, 1], dtype=np.int32))
+        estimates.append(provider.update(update_packet))
+    np.testing.assert_array_equal(estimates[0].pose, estimates[1].pose)
+    np.testing.assert_array_equal(estimates[0].covariance, estimates[1].covariance)
+    assert np.all(estimates[0].covariance[:, 0, 0] > 0.01)
+    assert np.all(estimates[0].covariance[:, 2, 2] > 0.02)
 
 
 def test_point_goal_observation_uses_provider_while_metrics_keep_truth() -> None:
@@ -117,4 +324,56 @@ def test_real_mujoco_ground_truth_provider_preserves_observation_and_frames() ->
     np.testing.assert_array_equal(state.info["localization_parent_frame"], ["map", "map"])
     next_state = env.step(np.array([[-1.0, 0.0], [-1.0, 0.0]], dtype=np.float32))
     np.testing.assert_allclose(next_state.info["localization_timestamp_s"], [0.1, 0.1])
+    env.close()
+
+
+def test_real_mujoco_dead_reckoning_drift_changes_only_localized_observation() -> None:
+    cfg = DiffDrivePointGoalCfg()
+    provider = DeadReckoningPoseProvider(
+        DeadReckoningCfg(linear_velocity_bias=0.2)
+    )
+    env = DiffDrivePointGoalMujocoEnv(cfg=cfg, num_envs=1, pose_provider=provider)
+    state = env.reset_to_initial_conditions(
+        np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        np.array([[1.0, 0.0]], dtype=np.float32),
+    )
+    np.testing.assert_allclose(state.info["localization_pose"], [[0.0, 0.0, 0.0]])
+    next_state = env.step(np.array([[-1.0, 0.0]], dtype=np.float32))
+    np.testing.assert_allclose(
+        next_state.info["localization_pose"][0, 0],
+        0.02,
+        atol=1.0e-5,
+    )
+    physical_x = float(next_state.info["robot_state"][0, 0])
+    assert abs(float(next_state.info["localization_pose"][0, 0]) - physical_x) > 0.019
+    true_distance = np.linalg.norm(
+        next_state.info["goal_position"] - next_state.info["robot_state"][:, :2],
+        axis=1,
+    )
+    np.testing.assert_allclose(next_state.info["distance_to_goal"], true_distance)
+    assert next_state.obs["obs"][0, 0] < state.obs["obs"][0, 0]
+    np.testing.assert_array_equal(next_state.info["localization_parent_frame"], ["odom"])
+    env.close()
+
+
+def test_registry_selects_configured_dead_reckoning_provider() -> None:
+    registry.ensure_registries()
+    env = registry.make(
+        "DiffDrivePointGoal",
+        sim_backend="mujoco",
+        env_cfg_override={
+            "localization": {
+                "provider": "dead_reckoning",
+                "parent_frame": "odom",
+                "dead_reckoning": {"linear_velocity_bias": 0.1, "seed": 31},
+            }
+        },
+        num_envs=2,
+    )
+    assert isinstance(env.pose_provider, DeadReckoningPoseProvider)
+    state = env.init_state()
+    np.testing.assert_array_equal(
+        state.info["localization_parent_frame"],
+        ["odom", "odom"],
+    )
     env.close()

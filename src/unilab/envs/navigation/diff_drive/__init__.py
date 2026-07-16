@@ -23,7 +23,7 @@ from .point_goal_core import (
 )
 from .point_goal_env import DiffDrivePointGoalEnv
 from .point_goal_mujoco_env import DiffDrivePointGoalMujocoEnv
-from .wheel_control import twist_to_wheel_speeds
+from .wheel_control import twist_to_wheel_speeds, wheel_speeds_to_twist
 
 __all__ = [
     "DiffDrivePointGoalCfg",
@@ -46,4 +46,5 @@ __all__ = [
     "points_clear_static_obstacles",
     "wrap_angle",
     "twist_to_wheel_speeds",
+    "wheel_speeds_to_twist",
 ]

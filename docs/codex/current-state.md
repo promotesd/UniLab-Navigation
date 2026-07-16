@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M8.2 dead-reckoning provider
+- Earliest incomplete milestone after this update: M7.3 fair RL comparison
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -523,12 +523,65 @@ JSON SHA-256: 01c327d5e968cabf1eeef1a56c24e424155de6549d1f13663bbc95e50700d68a
 
 The smoke JSON remains under `/tmp` and is not committed.
 
-## Next milestone: M8.2 dead-reckoning provider
+## M8.2 noisy-pose and dead-reckoning providers
 
-Required work:
+Status: complete.
 
-- define wheel-odometry/control packets separately from simulator pose;
-- integrate planar dead reckoning with deterministic noise and drift;
-- preserve reset, timestamp, covariance, validity, and frame contracts;
-- demonstrate observation degradation without changing task truth;
-- add fixed-seed analytical and real MuJoCo tests.
+Delivered:
+
+- typed `GroundTruthPosePacket` and `WheelOdometryPacket` inputs combined only at
+  the provider boundary, with matching timestamp and frame validation;
+- measured MuJoCo wheel-joint velocities converted back into planar body twist;
+- backend-independent kinematic environments emitting the same odometry packet
+  contract from their exact control twist;
+- configurable provider selection through `DiffDrivePointGoalCfg.localization`
+  and registry/Hydra nested overrides;
+- seeded noisy-pose provider with position/heading bias, Gaussian noise,
+  covariance, frame validation, and `DEGRADED` status;
+- seeded dead-reckoning provider initialized from truth only on reset, then
+  integrating wheel odometry without consuming update truth;
+- monotonic timestamps, interval/timestamp consistency, partial reset behavior,
+  covariance growth, and explicit `odom -> base_link` frames;
+- task rewards, success, timeouts, collisions, and reported true distance kept
+  independent from localized observations;
+- analytical inverse-kinematics, deterministic-noise, covariance, packet,
+  config-factory, registry, and real MuJoCo integration tests.
+
+Bounded real MuJoCo localization sensitivity run:
+
+- episodes/provider: `128` on one manifest (seed `8201`);
+- ground truth: success `1.0000`, timeout `0.0000`, SPL `0.9702`;
+- noisy pose (`0.05 m` position noise, `0.02 rad` heading noise, `0.02 m`
+  x-bias): success `1.0000`, timeout `0.0000`, SPL `0.9755`;
+- dead reckoning (`0.02 m/s` linear noise, `0.01 rad/s` angular noise,
+  `0.01 m/s` and `0.005 rad/s` biases): success `0.3438`, timeout `0.6562`,
+  SPL `0.3243`.
+
+The dead-reckoning degradation is retained as measured evidence of wheel-only
+drift and model/slip error. Task truth was unchanged, so the difference comes
+through the provider observation boundary.
+
+Validation:
+
+```text
+Ruff: clean
+targeted localization/navigation tests: 38 passed
+complete navigation suite: 141 passed
+report: /tmp/unilab_m82_localization_smoke.json
+report SHA-256: 57d6abc3247ac62323a21d10afff95b35a899d2ca949dd44a86679d5c6bc7f68
+```
+
+The report remains under `/tmp` and is not committed.
+
+## Next milestone: M7.3 fair RL comparison
+
+The existing PPO, SAC, and TD3 evidence validates each adapter, but it is not a
+fair algorithm comparison: PPO used `9,928,704` environment steps per seed,
+while SAC and TD3 used `106,496`. Required work:
+
+- define one common task, manifest, seeds, environment-step budget, evaluation
+  cadence, device, precision, and reporting schema;
+- train or truncate every algorithm to that same budget without presenting
+  unequal-budget results as comparative evidence;
+- report success, SPL, sample efficiency, wall time, and variance honestly;
+- preserve raw commands and pending outputs if the full run cannot finish.

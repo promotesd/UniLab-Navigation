@@ -6,6 +6,7 @@ from unilab.assets import ASSETS_ROOT_PATH
 from unilab.base import registry
 from unilab.base.base import EnvCfg
 from unilab.base.scene import SceneCfg
+from unilab.envs.navigation.localization import LocalizationCfg
 
 
 @dataclass
@@ -59,6 +60,7 @@ class DiffDrivePointGoalCfg(EnvCfg):
     reward_config: PointGoalRewardConfig = field(
         default_factory=PointGoalRewardConfig
     )
+    localization: LocalizationCfg = field(default_factory=LocalizationCfg)
 
     def validate(self) -> None:
         """Reject invalid task configurations before environment creation."""
@@ -131,3 +133,5 @@ class DiffDrivePointGoalCfg(EnvCfg):
             raise ValueError(
                 "reward_config.time_penalty must be non-negative"
             )
+
+        self.localization.validate()

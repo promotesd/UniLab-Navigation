@@ -3,7 +3,10 @@
 import numpy as np
 import pytest
 
-from unilab.envs.navigation.diff_drive import twist_to_wheel_speeds
+from unilab.envs.navigation.diff_drive import (
+    twist_to_wheel_speeds,
+    wheel_speeds_to_twist,
+)
 
 
 def test_straight_command_produces_equal_wheel_speeds() -> None:
@@ -115,3 +118,18 @@ def test_invalid_command_shape_is_rejected() -> None:
             wheel_radius=0.08,
             wheel_track=0.32,
         )
+
+
+def test_wheel_speed_inverse_recovers_body_twist() -> None:
+    commands = np.array([[0.3, -0.7], [0.0, 1.2]], dtype=np.float32)
+    wheels = twist_to_wheel_speeds(
+        commands,
+        wheel_radius=0.08,
+        wheel_track=0.32,
+    )
+    recovered = wheel_speeds_to_twist(
+        wheels,
+        wheel_radius=0.08,
+        wheel_track=0.32,
+    )
+    np.testing.assert_allclose(recovered, commands, atol=1.0e-6)

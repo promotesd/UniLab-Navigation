@@ -10,6 +10,11 @@ from unilab.base import registry
 from unilab.base.backend import create_backend, env_backend_kwargs
 from unilab.base.np_env import NpEnvState
 from unilab.dtype_config import get_global_dtype
+from unilab.envs.navigation.localization import (
+    LocalizationPacket,
+    PoseProvider,
+    WheelOdometryPacket,
+)
 from unilab.utils.rotation import np_yaw_from_quat, np_yaw_to_quat
 
 from .point_goal_cfg import DiffDrivePointGoalCfg
@@ -19,7 +24,7 @@ from .point_goal_core import (
     is_goal_reached,
 )
 from .point_goal_env import DiffDrivePointGoalEnv
-from .wheel_control import twist_to_wheel_speeds
+from .wheel_control import twist_to_wheel_speeds, wheel_speeds_to_twist
 
 
 @registry.env("DiffDrivePointGoal", sim_backend="mujoco")
@@ -31,6 +36,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         cfg: DiffDrivePointGoalCfg,
         num_envs: int = 1,
         backend_type: str = "mujoco",
+        pose_provider: PoseProvider | None = None,
     ) -> None:
         if cfg.scene is None:
             raise ValueError("DiffDrivePointGoalCfg.scene must be configured")
@@ -48,6 +54,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             cfg=cfg,
             backend=backend,
             num_envs=num_envs,
+            pose_provider=pose_provider,
         )
 
         # MuJoCo's vectorized pool must exist before reset(), set_state()
@@ -76,6 +83,9 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         self.wheel_commands = np.zeros(
             (num_envs, self.ACTION_DIM),
             dtype=dtype,
+        )
+        self._wheel_dof_vel_indices = self._backend.get_joint_dof_vel_indices(
+            ("left_wheel_joint", "right_wheel_joint")
         )
 
     def apply_action(
@@ -110,8 +120,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         self._sync_robot_states_from_backend()
         self.localization_time_s += self._cfg.ctrl_dt
         self.pose_estimate = self.pose_provider.update(
-            self.robot_states,
-            self.localization_time_s,
+            self._build_localization_packet(self._cfg.ctrl_dt),
         )
 
         current_distance, _ = compute_point_goal_metrics(
@@ -224,8 +233,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         )
         self.localization_time_s[indices] = 0.0
         self.pose_estimate = self.pose_provider.reset(
-            self.robot_states,
-            self.localization_time_s,
+            self._build_localization_packet(0.0),
             indices,
         )
 
@@ -302,6 +310,28 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
 
         self.robot_states[env_indices, 2] = (
             base_yaw[env_indices]
+        )
+
+    def _build_localization_packet(self, dt_s: float) -> LocalizationPacket:
+        packet = super()._build_localization_packet(dt_s)
+        wheel_speeds = np.asarray(
+            self._backend.get_dof_vel(),
+            dtype=get_global_dtype(),
+        )[:, self._wheel_dof_vel_indices]
+        measured_twist = wheel_speeds_to_twist(
+            wheel_speeds,
+            wheel_radius=self._cfg.wheel_radius,
+            wheel_track=self._cfg.wheel_track,
+        )
+        return LocalizationPacket(
+            ground_truth=packet.ground_truth,
+            wheel_odometry=WheelOdometryPacket(
+                timestamp_s=packet.timestamp_s,
+                dt_s=packet.wheel_odometry.dt_s,
+                linear_velocity=measured_twist[:, 0],
+                angular_velocity=measured_twist[:, 1],
+                frame_id=packet.wheel_odometry.frame_id,
+            ),
         )
 
     def _sample_initial_robot_states(self, env_indices: np.ndarray) -> np.ndarray:
