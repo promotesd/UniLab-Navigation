@@ -1,0 +1,45 @@
+# @package _global_
+
+# MuJoCo differential-drive PointGoal task with one fixed static obstacle.
+
+training:
+  task_name: DiffDrivePointGoalObstacles
+  sim_backend: mujoco
+  play_steps: 500
+  play_env_num: 16
+  render_spacing: 0.0
+  cam_tracking: true
+  cam_tracking_env_idx: 0
+  cam_tracking_extra_envs: 9
+
+interactive:
+  action_mode: policy
+  policy_obs_mode: auto
+  camera_follow_body: true
+  camera_focus_body_name: base_link
+  use_env_visual_model: false
+
+algo:
+  save_interval: 25
+  obs_groups:
+    actor:
+      - actor
+    critic:
+      - critic
+
+reward:
+  progress_scale: 2.0
+  success_bonus: 10.0
+  time_penalty: 0.01
+
+env:
+  seed: ${algo.seed}
+  randomize_layout: true
+  lidar:
+    beam_count: 16
+    angle_min: -3.141592653589793
+    angle_max: 3.141592653589793
+    min_range: 0.05
+    max_range: 5.0
+    noise_std: 0.01
+    noise_seed: ${algo.seed}

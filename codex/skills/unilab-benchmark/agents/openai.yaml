@@ -1,0 +1,6 @@
+interface:
+  display_name: "UniLab Benchmark"
+  short_description: "Run fixed-episode and framework performance studies"
+  default_prompt: "Use $unilab-benchmark to build a controlled evaluation or benchmark and report reproducible evidence instead of assumptions."
+policy:
+  allow_implicit_invocation: true

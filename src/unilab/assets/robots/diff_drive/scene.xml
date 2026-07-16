@@ -1,0 +1,202 @@
+<mujoco model="diff_drive_point_goal">
+    <compiler angle="radian" autolimits="true"/>
+
+    <option
+        timestep="0.01"
+        gravity="0 0 -9.81"
+        integrator="implicitfast"
+    />
+
+    <statistic
+        center="0 0 0.10"
+        extent="2.0"
+    />
+
+    <visual>
+        <headlight
+            ambient="0.4 0.4 0.4"
+            diffuse="0.8 0.8 0.8"
+            specular="0.1 0.1 0.1"
+        />
+        <rgba haze="0.15 0.25 0.35 1"/>
+        <global azimuth="135" elevation="-25"/>
+    </visual>
+
+    <asset>
+        <texture
+            name="skybox"
+            type="skybox"
+            builtin="gradient"
+            rgb1="0.35 0.50 0.70"
+            rgb2="0.05 0.08 0.12"
+            width="512"
+            height="512"
+        />
+
+        <texture
+            name="ground_texture"
+            type="2d"
+            builtin="checker"
+            rgb1="0.18 0.18 0.18"
+            rgb2="0.28 0.28 0.28"
+            width="512"
+            height="512"
+        />
+
+        <material
+            name="ground_material"
+            texture="ground_texture"
+            texrepeat="4 4"
+            texuniform="true"
+            reflectance="0.05"
+        />
+    </asset>
+
+    <default>
+        <joint
+            damping="0.05"
+            armature="0.001"
+        />
+
+        <geom
+            condim="3"
+            friction="1.0 0.005 0.0001"
+            solref="0.01 1"
+            solimp="0.9 0.95 0.001"
+        />
+
+        <default class="wheel">
+            <joint
+                type="hinge"
+                axis="0 1 0"
+                damping="0.02"
+                armature="0.001"
+            />
+
+            <geom
+                type="cylinder"
+                size="0.08 0.025"
+                euler="1.57079632679 0 0"
+                mass="0.25"
+                friction="1.5 0.005 0.0001"
+                rgba="0.08 0.08 0.10 1"
+            />
+        </default>
+
+        <default class="visual">
+            <geom
+                contype="0"
+                conaffinity="0"
+                group="1"
+            />
+        </default>
+    </default>
+
+    <worldbody>
+        <light
+            pos="0 0 3"
+            dir="0 0 -1"
+            directional="true"
+        />
+
+        <geom
+            name="floor"
+            type="plane"
+            size="0 0 0.1"
+            material="ground_material"
+        />
+
+        <body
+            name="base_link"
+            pos="0 0 0.08"
+        >
+            <freejoint name="base_free_joint"/>
+
+            <geom
+                name="chassis"
+                type="box"
+                pos="0 0 0.035"
+                size="0.22 0.14 0.03"
+                mass="4.0"
+                rgba="0.12 0.42 0.80 1"
+            />
+
+            <geom
+                class="visual"
+                name="front_marker"
+                type="box"
+                pos="0.18 0 0.10"
+                size="0.04 0.10 0.015"
+                mass="0.01"
+                rgba="0.95 0.25 0.10 1"
+            />
+
+            <body
+                name="left_wheel"
+                pos="0.03 0.16 0"
+            >
+                <joint
+                    class="wheel"
+                    name="left_wheel_joint"
+                />
+
+                <geom
+                    class="wheel"
+                    name="left_wheel_geom"
+                />
+            </body>
+
+            <body
+                name="right_wheel"
+                pos="0.03 -0.16 0"
+            >
+                <joint
+                    class="wheel"
+                    name="right_wheel_joint"
+                />
+
+                <geom
+                    class="wheel"
+                    name="right_wheel_geom"
+                />
+            </body>
+
+            <geom
+                name="rear_caster"
+                type="sphere"
+                pos="-0.17 0 -0.045"
+                size="0.035"
+                mass="0.05"
+                friction="0.05 0.005 0.0001"
+                rgba="0.35 0.35 0.38 1"
+            />
+        </body>
+    </worldbody>
+
+    <actuator>
+        <velocity
+            name="left_wheel_actuator"
+            joint="left_wheel_joint"
+            kv="2.0"
+            forcelimited="true"
+            forcerange="-0.5 0.5"
+            ctrlrange="-20 20"
+        />
+
+        <velocity
+            name="right_wheel_actuator"
+            joint="right_wheel_joint"
+            kv="2.0"
+            forcelimited="true"
+            forcerange="-0.5 0.5"
+            ctrlrange="-20 20"
+        />
+    </actuator>
+
+    <keyframe>
+        <key
+            name="home"
+            qpos="0 0 0.08 1 0 0 0 0 0"
+        />
+    </keyframe>
+</mujoco>

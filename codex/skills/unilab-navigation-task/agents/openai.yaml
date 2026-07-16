@@ -1,0 +1,6 @@
+interface:
+  display_name: "UniLab Navigation Task"
+  short_description: "Implement navigation environments, robots, and sensors"
+  default_prompt: "Use $unilab-navigation-task to implement the requested navigation task change across config, registry, backend, tests, and smoke validation."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: "UniLab Navigation Orchestrator"
+  short_description: "Plan and execute the next verified project milestone"
+  default_prompt: "Use $unilab-navigation-orchestrator to inspect the repository and implement the next complete milestone with tests and validation."
+policy:
+  allow_implicit_invocation: true

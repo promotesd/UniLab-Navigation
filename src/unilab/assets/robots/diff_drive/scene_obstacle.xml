@@ -1,0 +1,47 @@
+<mujoco model="diff_drive_point_goal_obstacle">
+    <include file="scene.xml"/>
+
+    <worldbody>
+        <body name="static_obstacle_body" pos="2.0 0 0.50">
+            <joint
+                name="static_obstacle_x"
+                type="slide"
+                axis="1 0 0"
+                damping="1000"
+                frictionloss="1000"
+            />
+            <joint
+                name="static_obstacle_y"
+                type="slide"
+                axis="0 1 0"
+                damping="1000"
+                frictionloss="1000"
+            />
+            <geom
+                name="static_obstacle"
+                type="box"
+                size="0.35 0.75 0.50"
+                mass="1000"
+                rgba="0.80 0.25 0.12 1"
+            />
+            <site
+                name="static_obstacle_contact_site"
+                type="box"
+                size="0.36 0.76 0.51"
+                rgba="0 0 0 0"
+            />
+        </body>
+    </worldbody>
+
+    <sensor>
+        <framepos
+            name="static_obstacle_position"
+            objtype="body"
+            objname="static_obstacle_body"
+        />
+        <touch
+            name="static_obstacle_contact"
+            site="static_obstacle_contact_site"
+        />
+    </sensor>
+</mujoco>

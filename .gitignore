@@ -41,6 +41,10 @@ htmlcov/
 # Project specific
 logs/
 runs/
+wandb/
+checkpoints/
+events.out.tfevents.*
+*.ckpt
 run_config.json
 run_summary.json
 .worktrees/

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "task": "DiffDrivePointGoal",
+  "backend": "mujoco",
+  "quick": {
+    "evaluation_episodes": 32,
+    "evaluation_seed": 1101,
+    "benchmark_environments": 32,
+    "benchmark_rollout_steps": 8,
+    "benchmark_repetitions": 2,
+    "benchmark_seeds": [101, 202, 303]
+  },
+  "formal": {
+    "training_seeds": [1, 2, 3],
+    "training_environment_steps_per_seed": 98304,
+    "training_environments": 1024,
+    "evaluation_episodes": 4096,
+    "evaluation_manifest_seed": 7301,
+    "benchmark_environments": 256,
+    "benchmark_rollout_steps": 32,
+    "benchmark_warmup_repetitions": 2,
+    "benchmark_repetitions": 5,
+    "benchmark_seeds": [101, 202, 303]
+  },
+  "fixed_seeds": {
+    "random_policy": 2,
+    "localization_recording": 8301,
+    "online_estimator": 8401,
+    "ros2_bridge": 8501,
+    "network_initialization": 991
+  }
+}
