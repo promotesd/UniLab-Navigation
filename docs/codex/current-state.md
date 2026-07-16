@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M7.3 fair RL comparison
+- Earliest incomplete milestone after this update: M8.3 recorded-estimate replay
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -573,15 +573,78 @@ report SHA-256: 57d6abc3247ac62323a21d10afff95b35a899d2ca949dd44a86679d5c6bc7f68
 
 The report remains under `/tmp` and is not committed.
 
-## Next milestone: M7.3 fair RL comparison
+## M7.3 fair PPO/SAC/TD3 comparison
 
-The existing PPO, SAC, and TD3 evidence validates each adapter, but it is not a
-fair algorithm comparison: PPO used `9,928,704` environment steps per seed,
-while SAC and TD3 used `106,496`. Required work:
+Status: complete.
 
-- define one common task, manifest, seeds, environment-step budget, evaluation
-  cadence, device, precision, and reporting schema;
-- train or truncate every algorithm to that same budget without presenting
-  unequal-budget results as comparative evidence;
-- report success, SPL, sample efficiency, wall time, and variance honestly;
-- preserve raw commands and pending outputs if the full run cannot finish.
+The earlier adapter evidence remains valid independently, but its unequal
+training budgets are not used for this comparison. M7.3 trained a fresh
+controlled matrix with:
+
+- algorithms: PPO, SAC, and TD3;
+- training seeds: `1`, `2`, `3` for every algorithm;
+- environments: `1,024` for every run;
+- exact environment-step budget: `98,304` per seed;
+- training device/precision: CUDA / FP32 for every run;
+- unchanged obstacle-free `DiffDrivePointGoal` task and reward configuration;
+- held-out evaluation: `4,096` real MuJoCo episodes per seed and algorithm;
+- evaluation device: CPU;
+- one initial-condition manifest, seed `7301`, internal SHA-256
+  `756beb762e593e967fd2e86bf9da0bc65d3b7b930886fe97670b0add04b09fe2`;
+- autoreset disabled, with each policy evaluated in a fresh environment.
+
+Delivered:
+
+- a strict run-spec parser and `3 algorithms x N seeds` matrix validator;
+- rejection of incomplete training, duplicate/missing seeds, unequal step
+  budgets, differing task/reward/environment/device/precision/hardware
+  contracts, mismatched checkpoints, and differing manifest hashes;
+- checkpoint and raw-input SHA-256 provenance in the aggregate report;
+- per-algorithm mean/std for success, collision, timeout, distance, progress,
+  episode length, successful episode length, path length, SPL, and training
+  wall time;
+- explicit endpoint sample-efficiency fields named
+  `held_out_metrics_at_fixed_environment_step_budget`;
+- console summary and strict machine-readable JSON output;
+- evaluator reports now record inference device and checkpoint hashes.
+
+Formal held-out result at exactly `98,304` training environment steps/seed:
+
+| Algorithm | Success mean ± std | Timeout mean ± std | SPL mean ± std | Training seconds mean ± std |
+| --- | ---: | ---: | ---: | ---: |
+| PPO | 0.299479 ± 0.065702 | 0.700521 ± 0.065702 | 0.265631 ± 0.060960 | 2.957 ± 0.288 |
+| SAC | 0.078857 ± 0.106861 | 0.921143 ± 0.106861 | 0.061991 ± 0.083388 | 12.459 ± 7.717 |
+| TD3 | 0.034993 ± 0.003568 | 0.965007 ± 0.003568 | 0.034447 ± 0.003825 | 9.918 ± 3.331 |
+
+All collision rates were zero on this obstacle-free task. These numbers measure
+held-out effectiveness at one deliberately short, equal sample budget. They do
+not establish asymptotic algorithm ranking. Training time includes cold-start
+and compilation effects (notably the first SAC seed), so it is retained as raw
+evidence rather than presented as a warmed systems-performance claim.
+
+Evidence:
+
+```text
+Ruff: clean
+targeted comparison/evaluator/adapter tests: 33 passed
+complete navigation suite: 145 passed
+manifest file: /tmp/unilab_m73/manifest.json
+manifest file SHA-256: 8f122dcf2c043f3413c27e30011361afef1ce909f905a63880b4e3fe1c2641c2
+comparison: /tmp/unilab_m73/comparison.json
+comparison SHA-256: a3ffe8137cdd4c7992534fc58c0661ca48fbe8badf4317883d46ab7cc929d9c4
+```
+
+All logs, checkpoints, TensorBoard events, manifests, evaluation reports, and
+aggregate JSON remain under `/tmp` and are not committed.
+
+## Next milestone: M8.3 recorded-estimate replay
+
+Required work:
+
+- define an offline timestamped localization-record schema with pose,
+  covariance, validity/status, and explicit parent/child frames;
+- replay recorded estimates deterministically against navigation sensor time;
+- define missing, duplicate, non-monotonic, and out-of-range timestamp behavior;
+- preserve task truth separation and fixed observation shape;
+- add analytical, serialization, registry/config, and real MuJoCo integration
+  tests.

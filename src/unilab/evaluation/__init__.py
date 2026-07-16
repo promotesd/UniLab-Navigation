@@ -1,5 +1,12 @@
 """Independent evaluation utilities."""
 
+from .algorithm_comparison import (
+    AlgorithmRunSpec,
+    aggregate_point_goal_algorithm_runs,
+    format_point_goal_algorithm_comparison,
+    parse_algorithm_run_spec,
+    write_point_goal_algorithm_comparison,
+)
 from .point_goal import (
     PointGoalManifest,
     PpoPointGoalPolicy,
@@ -28,22 +35,27 @@ from .trajectory_analysis import (
 )
 
 __all__ = [
+    "AlgorithmRunSpec",
     "PointGoalManifest",
     "PpoCheckpointSpec",
     "PpoPointGoalPolicy",
     "aggregate_ppo_checkpoint_results",
+    "aggregate_point_goal_algorithm_runs",
     "analyze_point_goal_trajectories",
     "build_point_goal_ppo_policy_factory",
     "evaluate_point_goal_policies",
     "evaluate_point_goal_policy",
     "format_point_goal_summary",
+    "format_point_goal_algorithm_comparison",
     "generate_point_goal_manifest",
     "format_ppo_sweep_summary",
     "load_point_goal_ppo_config",
     "parse_ppo_checkpoint_spec",
+    "parse_algorithm_run_spec",
     "ppo_algo_config_dict",
     "read_point_goal_manifest",
     "write_point_goal_manifest",
+    "write_point_goal_algorithm_comparison",
     "write_point_goal_report",
     "write_point_goal_trajectory_svg",
 ]

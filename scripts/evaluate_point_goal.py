@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +97,14 @@ def _git_sha() -> str:
         text=True,
     )
     return completed.stdout.strip()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _algo_config_dict(cfg: DictConfig) -> dict[str, Any]:
@@ -225,6 +234,7 @@ def main() -> None:
         "schema_version": 1,
         "git_sha": _git_sha(),
         "config": task_config,
+        "evaluation": {"device": args.device},
         "checkpoint": str(args.checkpoint.resolve()) if args.checkpoint else None,
         "checkpoints": {
             "ppo": str(args.checkpoint.resolve()) if args.checkpoint else None,
@@ -240,6 +250,10 @@ def main() -> None:
     }
     for policy_name, result in report["policies"].items():
         result["checkpoint"] = report["checkpoints"].get(policy_name)
+        checkpoint = result["checkpoint"]
+        result["checkpoint_sha256"] = (
+            _file_sha256(Path(checkpoint)) if checkpoint is not None else None
+        )
 
     print(format_point_goal_summary(report))
     output_path = write_point_goal_report(report, args.output)
