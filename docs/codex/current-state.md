@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M8.5 ROS2 bridge
+- Earliest incomplete milestone after this update: M9 ROS2 and TurtleBot 4
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -756,15 +756,67 @@ report SHA-256: 71feb8d80ac2d44d07edd4751a7d59cef39676b1708c846c99bd4fbab7bbf455
 
 The smoke report remains under `/tmp` and is not committed.
 
-## Next milestone: M8.5 ROS2 bridge
+## M8.5 ROS2 localization bridge
+
+Status: complete.
+
+Delivered:
+
+- optional `unilab.bridges.ros2` package with no `rclpy`, `nav_msgs`, or TF
+  dependency;
+- attribute-based conversion of real or test-double `nav_msgs/Odometry`-shaped
+  messages into validated planar `PoseEstimate` batches;
+- strict ROS stamp normalization/range, future-time, per-environment monotonic
+  stamp, parent frame, child frame, finite pose, normalized quaternion,
+  planarity, and 6x6-to-planar covariance validation;
+- explicit target-from-source `PlanarTransform` application for x/y/yaw and
+  covariance, with rejection when TF is missing, mismatched, or ambiguous;
+- explicit QoS contract covering reliability, durability, keep-last history,
+  and positive queue depth for a future transport adapter;
+- thread-safe per-environment latest-message buffering;
+- missing messages and messages older than `max_message_age_s` represented as
+  finite `LOST` estimates, preserving batch shape;
+- `Ros2BufferedLocalizationPlugin` connecting the buffer to the dependency-free
+  online estimator lifecycle and environment shutdown path;
+- message-shaped unit-test dataclasses so bridge coverage requires no ROS2
+  installation;
+- real MuJoCo test proving buffered localization changes policy observation
+  without changing task-truth distance.
+
+Bounded transport-free real MuJoCo bridge smoke:
+
+- environments: `32`; steps: `20`;
+- a ROS2-shaped odometry message was validated and ingested for every
+  environment before every control step;
+- all observations finite; all localization statuses `TRACKING`;
+- frames: `map -> base_link`;
+- maximum one-step message/physics planar pose difference: `0.0461 m`;
+- QoS: best-effort, volatile, keep-last, depth `5`;
+- plugin shutdown propagated successfully.
+
+Validation:
+
+```text
+Ruff: clean
+focused ROS2 bridge tests: 6 passed
+targeted bridge/localization/MuJoCo tests: 38 passed
+complete navigation suite: 164 passed
+report: /tmp/unilab_m85_ros2_bridge_smoke.json
+report SHA-256: 14bd2b90d6e5474ec917a62b16f2b1dee81179c4d51a0a0cc36e9e87e8b318c0
+```
+
+The smoke report remains under `/tmp` and is not committed. A live ROS graph is
+deliberately not required at this phase.
+
+## Next milestone: M9 ROS2 and TurtleBot 4
 
 Required work:
 
-- keep ROS2 conversion in an optional bridge package with no `rclpy` import in
-  core navigation modules;
-- define odometry/localization message conversion, stamps, frames, covariance,
-  QoS, TF availability, message age, and dropout behavior;
-- provide dependency-free message-shaped test doubles so core tests do not
-  require a ROS2 installation;
-- add bridge unit tests and a bounded transport-free navigation integration
-  smoke before any live ROS graph is required.
+- add dependency-free Twist command, LaserScan, reset, and episode-control
+  contracts around the localization bridge;
+- separate simulation and real-robot configuration explicitly;
+- define TurtleBot 4 velocity limits, topic/frame names, QoS, scan geometry,
+  and timeout/failsafe behavior;
+- add an optional live transport adapter without importing ROS2 in core tests;
+- validate the complete command/odometry/LiDAR/reset flow with transport-free
+  TurtleBot 4 test doubles before requiring hardware.
