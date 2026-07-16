@@ -33,6 +33,10 @@ from unilab.evaluation.point_goal_ppo import (
     load_point_goal_ppo_config,
     ppo_algo_config_dict,
 )
+from unilab.evaluation.point_goal_sac import (
+    build_point_goal_sac_policy_factory,
+    load_point_goal_sac_config,
+)
 from unilab.training import BackendAdapter, create_env, ensure_registries
 
 
@@ -44,10 +48,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--policies",
         nargs="+",
-        choices=("zero", "random", "heuristic", "ppo"),
+        choices=("zero", "random", "heuristic", "ppo", "sac"),
         default=("zero", "random", "heuristic"),
     )
     parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--sac-checkpoint", type=Path)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-episode-seconds", type=float)
     parser.add_argument(
@@ -111,6 +116,8 @@ def main() -> None:
         raise ValueError("evaluation seeds must be non-negative")
     if "ppo" in args.policies and args.checkpoint is None:
         raise ValueError("--checkpoint is required when --policies includes ppo")
+    if "sac" in args.policies and args.sac_checkpoint is None:
+        raise ValueError("--sac-checkpoint is required when --policies includes sac")
 
     manifest = (
         read_point_goal_manifest(args.manifest_input) if args.manifest_input is not None else None
@@ -124,6 +131,7 @@ def main() -> None:
 
     ensure_registries()
     cfg = _load_config()
+    sac_cfg = load_point_goal_sac_config(ROOT_DIR) if "sac" in args.policies else None
     env_cfg_override = BackendAdapter(
         cfg, root_dir=ROOT_DIR, algo_name="ppo"
     ).build_task_env_cfg_override()
@@ -175,11 +183,19 @@ def main() -> None:
             )
         elif policy_name == "heuristic":
             policy_factories[policy_name] = lambda env: HeuristicPointGoalPolicy()
-        else:
+        elif policy_name == "ppo":
             assert args.checkpoint is not None
             policy_factories[policy_name] = _ppo_policy_factory(
                 cfg,
                 checkpoint=args.checkpoint.resolve(),
+                device=args.device,
+            )
+        else:
+            assert args.sac_checkpoint is not None
+            assert sac_cfg is not None
+            policy_factories[policy_name] = build_point_goal_sac_policy_factory(
+                sac_cfg,
+                checkpoint=args.sac_checkpoint.resolve(),
                 device=args.device,
             )
 
@@ -194,11 +210,17 @@ def main() -> None:
         "git_sha": _git_sha(),
         "config": task_config,
         "checkpoint": str(args.checkpoint.resolve()) if args.checkpoint else None,
+        "checkpoints": {
+            "ppo": str(args.checkpoint.resolve()) if args.checkpoint else None,
+            "sac": (
+                str(args.sac_checkpoint.resolve()) if args.sac_checkpoint else None
+            ),
+        },
         "trajectories_recorded": bool(args.record_trajectories),
         **evaluation,
     }
     for policy_name, result in report["policies"].items():
-        result["checkpoint"] = report["checkpoint"] if policy_name == "ppo" else None
+        result["checkpoint"] = report["checkpoints"].get(policy_name)
 
     print(format_point_goal_summary(report))
     output_path = write_point_goal_report(report, args.output)

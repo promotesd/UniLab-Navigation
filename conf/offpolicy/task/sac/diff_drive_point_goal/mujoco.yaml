@@ -1,0 +1,49 @@
+# @package _global_
+
+# SAC on the same MuJoCo differential-drive PointGoal task used by PPO.
+
+training:
+  task_name: DiffDrivePointGoal
+  sim_backend: mujoco
+  play_steps: 500
+  play_env_num: 16
+  render_spacing: 0.0
+  cam_tracking: true
+  cam_tracking_env_idx: 0
+  cam_tracking_extra_envs: 9
+
+interactive:
+  action_mode: policy
+  policy_obs_mode: auto
+  camera_follow_body: true
+  camera_focus_body_name: base_link
+  use_env_visual_model: false
+
+algo:
+  num_envs: 1024
+  batch_size: 2048
+  replay_buffer_n: 256
+  learning_starts: 1
+  updates_per_step: 4
+  policy_frequency: 2
+  max_iterations: 101
+  save_interval: 25
+  gamma: 0.99
+  tau: 0.01
+  actor_hidden_dim: 256
+  critic_hidden_dim: 256
+  num_atoms: 51
+  obs_normalization: false
+  use_layer_norm: true
+  use_symmetry: false
+  algo_params:
+    alpha_init: 0.01
+    target_entropy_ratio: 0.5
+
+reward:
+  progress_scale: 2.0
+  success_bonus: 10.0
+  time_penalty: 0.01
+
+env:
+  seed: ${algo.seed}

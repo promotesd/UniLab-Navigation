@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M7.1 SAC adapter
+- Earliest incomplete milestone after this update: M7.2 TD3 value gate
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -379,12 +379,69 @@ JSON SHA-256: 051ceebd217aa69385bdad131b59b8f5daac7ab273fbec30e1de8a0aa3acfe9c
 
 The evidence JSON remains under `/tmp` and is not committed.
 
-## Next milestone: M7.1 SAC adapter
+## M7.1 SAC adapter
+
+Status: complete.
+
+Delivered:
+
+- formal FastSAC Hydra task config on the unchanged obstacle-free
+  `DiffDrivePointGoal` environment;
+- algorithm-specific replay, update, entropy, network, and checkpoint settings
+  separated from the task/reward configuration;
+- native `FastSAC` actor/checkpoint loader with optional observation-normalizer
+  restore and deterministic inference;
+- `sac` support in the fixed-episode evaluator CLI alongside PPO;
+- console and machine-readable JSON reporting through the same manifest and
+  metric implementation;
+- config, invalid-checkpoint, deterministic action, and real MuJoCo integration
+  tests;
+- one-iteration CPU replay/update/save/reload smoke and formal GPU experiments.
+
+Formal experiment:
+
+- seeds: `1`, `2`, `3`;
+- configured iterations: `101` with checkpoints every `25` iterations;
+- environments: `1,024`;
+- observed training steps per seed: `106,496`;
+- held-out episodes per seed: `4,096`;
+- shared manifest SHA-256:
+  `2e55e0f8a5eb492c3f1230be820582eb7a08ef0a258d0aa8d542c2a71aabb0e9`;
+- autoreset disabled during independent evaluation.
+
+| Seed | SAC success | SAC timeout | SAC SPL mean |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.213379 | 0.786621 | 0.168621 |
+| 2 | 0.089600 | 0.910400 | 0.059308 |
+| 3 | 0.005127 | 0.994873 | 0.005122 |
+| mean ± std | 0.102702 ± 0.085522 | 0.897298 ± 0.085522 | 0.077684 ± 0.068001 |
+
+All SAC collision rates are zero because this is the obstacle-free task. The
+M5.4 PPO checkpoints reach `1.0 ± 0.0` success on the same held-out manifest.
+The current SAC configuration therefore validates the adapter and experimental
+contract, but it does **not** establish performance parity or sample efficiency
+with PPO at `106,496` steps.
+
+Validation and evidence:
+
+```text
+Ruff: clean
+complete navigation suite: 126 passed
+one-iteration CPU train/save/reload smoke: passed
+aggregate: /tmp/unilab_m71_sac_aggregate.json
+aggregate SHA-256: 24ae07f3cb21f9f3d30be31f7379bc4487b57029e03ff22a50abb41dba8eb516
+```
+
+Logs, checkpoints, TensorBoard files, evaluation JSON, and aggregate evidence
+remain under `/tmp` and are not committed.
+
+## Next milestone: M7.2 TD3 value gate
 
 Required work:
 
-- preserve the PointGoal task, manifest, and evaluator contracts;
-- add SAC training, checkpoint save/load, and deterministic inference;
-- separate algorithm-specific configuration from task configuration;
-- compare SAC to PPO using identical held-out fixed episodes and seeds;
-- add unit, integration, training-smoke, and checkpoint-reload coverage.
+- determine whether a PointGoal TD3 adapter adds independent experimental value
+  beyond SAC's deterministic evaluation path;
+- if retained, add a task config, native checkpoint adapter, fixed-episode CLI
+  support, training smoke, and shared-manifest evidence;
+- otherwise document the evidence-based reason for omitting it and continue to
+  localization/SLAM provider work.
