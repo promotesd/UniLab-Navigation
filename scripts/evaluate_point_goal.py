@@ -6,11 +6,9 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import torch
-from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 ROOT_DIR = Path(__file__).parent.parent
 SRC_DIR = ROOT_DIR / "src"
@@ -23,7 +21,6 @@ from unilab.envs.navigation.diff_drive import (
     ZeroPointGoalPolicy,
 )
 from unilab.evaluation.point_goal import (
-    PpoPointGoalPolicy,
     evaluate_point_goal_policies,
     format_point_goal_summary,
     generate_point_goal_manifest,
@@ -31,8 +28,12 @@ from unilab.evaluation.point_goal import (
     write_point_goal_manifest,
     write_point_goal_report,
 )
+from unilab.evaluation.point_goal_ppo import (
+    build_point_goal_ppo_policy_factory,
+    load_point_goal_ppo_config,
+    ppo_algo_config_dict,
+)
 from unilab.training import BackendAdapter, create_env, ensure_registries
-from unilab.training.rsl_rl import RslRlVecEnvWrapper, normalize_ppo_train_cfg
 
 
 def _parse_args() -> argparse.Namespace:
@@ -68,11 +69,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _load_config() -> DictConfig:
-    with initialize_config_dir(version_base="1.3", config_dir=str(ROOT_DIR / "conf" / "ppo")):
-        return compose(
-            config_name="config",
-            overrides=["task=diff_drive_point_goal/mujoco"],
-        )
+    return load_point_goal_ppo_config(ROOT_DIR)
 
 
 def _git_sha() -> str:
@@ -87,10 +84,7 @@ def _git_sha() -> str:
 
 
 def _algo_config_dict(cfg: DictConfig) -> dict[str, Any]:
-    value = OmegaConf.to_container(cfg.algo, resolve=True)
-    if not isinstance(value, dict):
-        raise TypeError("cfg.algo must resolve to a dictionary")
-    return cast(dict[str, Any], value)
+    return ppo_algo_config_dict(cfg)
 
 
 def _ppo_policy_factory(
@@ -99,53 +93,9 @@ def _ppo_policy_factory(
     checkpoint: Path,
     device: str,
 ):
-    if not checkpoint.is_file():
-        raise FileNotFoundError(f"PPO checkpoint does not exist: {checkpoint}")
-    checkpoint_keys = set(
-        torch.load(checkpoint, map_location="cpu", weights_only=True).keys()
+    return build_point_goal_ppo_policy_factory(
+        cfg, checkpoint=checkpoint, device=device
     )
-    if "actor_state_dict" not in checkpoint_keys:
-        raise ValueError(
-            f"PPO checkpoint must contain actor_state_dict; found keys {sorted(checkpoint_keys)}"
-        )
-
-    def factory(env: Any) -> PpoPointGoalPolicy:
-        try:
-            from rsl_rl.runners import OnPolicyRunner
-        except ImportError as exc:  # pragma: no cover - dependency installation error
-            raise RuntimeError("rsl-rl-lib is required to evaluate PPO checkpoints") from exc
-
-        wrapped_env = RslRlVecEnvWrapper(env, device=device)
-        train_cfg = normalize_ppo_train_cfg(_algo_config_dict(cfg))
-        algorithm_cfg = train_cfg.get("algorithm")
-        if isinstance(algorithm_cfg, dict):
-            algorithm_cfg["enable_compile"] = False
-        train_cfg.setdefault("runner", {})["logger"] = "none"
-        runner = OnPolicyRunner(wrapped_env, train_cfg, log_dir=None, device=device)
-        runner.load(
-            str(checkpoint),
-            load_cfg={
-                "actor": True,
-                "critic": False,
-                "optimizer": False,
-                "iteration": False,
-                "rnd": False,
-            },
-            map_location=device,
-        )
-        inference_policy = runner.get_inference_policy(device=device)
-
-        def infer(observations: Any) -> Any:
-            with torch.inference_mode():
-                return inference_policy(observations)
-
-        policy = PpoPointGoalPolicy(
-            infer,
-            lambda observations: wrapped_env.observations_to_tensordict(observations),
-        )
-        return policy
-
-    return factory
 
 
 def main() -> None:
