@@ -244,7 +244,10 @@ class DiffDrivePointGoalEnv(NpEnv):
             size=count,
         )
 
-        self.goals[indices] = self._sample_goal_positions(self.robot_states[indices, :2])
+        self.goals[indices] = self._sample_goal_positions(
+            self.robot_states[indices, :2],
+            env_indices=indices,
+        )
 
         self.normalized_actions[indices] = 0.0
         self.velocity_commands[indices] = 0.0
@@ -355,8 +358,14 @@ class DiffDrivePointGoalEnv(NpEnv):
         """Validate variant-specific explicit evaluator starts."""
         del robot_states, goals
 
-    def _sample_goal_positions(self, origins: np.ndarray) -> np.ndarray:
+    def _sample_goal_positions(
+        self,
+        origins: np.ndarray,
+        *,
+        env_indices: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Sample goals relative to planar origins using the task distribution."""
+        del env_indices
         distances = self._rng.uniform(
             self._cfg.min_goal_distance,
             self._cfg.max_goal_distance,

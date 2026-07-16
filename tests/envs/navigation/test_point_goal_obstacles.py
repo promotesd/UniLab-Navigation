@@ -10,6 +10,7 @@ from unilab.base import registry
 from unilab.envs.navigation.diff_drive import (
     DiffDrivePointGoalObstaclesCfg,
     DiffDrivePointGoalObstaclesMujocoEnv,
+    points_clear_batched_obstacles,
     points_clear_static_obstacles,
 )
 from unilab.evaluation.point_goal import PointGoalManifest, evaluate_point_goal_policy
@@ -76,8 +77,10 @@ def test_hydra_composes_static_obstacle_training_task() -> None:
     assert cfg.training.task_name == "DiffDrivePointGoalObstacles"
     assert cfg.training.sim_backend == "mujoco"
     assert cfg.env.seed == 23
+    assert cfg.env.randomize_layout
     assert cfg.env.lidar.beam_count == 16
     assert cfg.env.lidar.noise_seed == 23
+    assert cfg.env.lidar.noise_std == 0.01
 
 
 def test_real_mujoco_scene_contains_matching_static_obstacle() -> None:
@@ -113,6 +116,106 @@ def test_real_mujoco_reset_samples_obstacle_clear_goals_and_exposes_layout() -> 
         next_state.info["obstacle_centers"], state.info["obstacle_centers"]
     )
     env.close()
+
+
+def test_randomized_layout_replays_and_matches_real_mujoco_geometry() -> None:
+    cfg = DiffDrivePointGoalObstaclesCfg(randomize_layout=True, seed=29)
+    first = DiffDrivePointGoalObstaclesMujocoEnv(cfg=cfg, num_envs=64)
+    second = DiffDrivePointGoalObstaclesMujocoEnv(
+        cfg=DiffDrivePointGoalObstaclesCfg(randomize_layout=True, seed=29),
+        num_envs=64,
+    )
+    first_state = first.init_state()
+    second_state = second.init_state()
+    np.testing.assert_array_equal(first.robot_states, second.robot_states)
+    np.testing.assert_array_equal(first.goals, second.goals)
+    np.testing.assert_array_equal(first.obstacle_centers, second.obstacle_centers)
+    assert np.unique(first.obstacle_centers[:, 0], axis=0).shape[0] > 32
+    assert np.all(
+        points_clear_batched_obstacles(
+            first.robot_states[:, :2],
+            first.obstacle_centers,
+            first.obstacle_half_extents,
+            clearance=cfg.obstacle_clearance,
+        )
+    )
+    assert np.all(
+        points_clear_batched_obstacles(
+            first.goals,
+            first.obstacle_centers,
+            first.obstacle_half_extents,
+            clearance=cfg.obstacle_clearance,
+        )
+    )
+    np.testing.assert_allclose(
+        first_state.info["obstacle_physics_position"][:, :2],
+        first.obstacle_centers[:, 0],
+        atol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        second_state.info["obstacle_physics_position"][:, :2],
+        second.obstacle_centers[:, 0],
+        atol=1.0e-6,
+    )
+    stationary = np.tile(np.array([[-1.0, 0.0]], dtype=np.float32), (64, 1))
+    for _ in range(5):
+        first_state = first.step(stationary)
+    np.testing.assert_allclose(
+        first_state.info["obstacle_physics_position"][:, :2],
+        first.obstacle_centers[:, 0],
+        atol=1.0e-5,
+    )
+    first.close()
+    second.close()
+
+
+def test_fixed_manifest_round_trips_and_replays_randomized_obstacle_layouts() -> None:
+    source = DiffDrivePointGoalObstaclesMujocoEnv(
+        cfg=DiffDrivePointGoalObstaclesCfg(
+            randomize_layout=True,
+            seed=41,
+            max_episode_seconds=0.2,
+        ),
+        num_envs=8,
+    )
+    source.init_state()
+    manifest = PointGoalManifest(
+        seed=41,
+        robot_states=source.robot_states.copy(),
+        goals=source.goals.copy(),
+        obstacle_centers=source.obstacle_centers.copy(),
+        obstacle_half_extents=source.obstacle_half_extents.copy(),
+    )
+    round_trip = PointGoalManifest.from_dict(manifest.to_dict())
+    assert round_trip.to_dict() == manifest.to_dict()
+    source.close()
+
+    replay = DiffDrivePointGoalObstaclesMujocoEnv(
+        cfg=DiffDrivePointGoalObstaclesCfg(
+            randomize_layout=True,
+            seed=999,
+            max_episode_seconds=0.2,
+        ),
+        num_envs=8,
+    )
+    result = evaluate_point_goal_policy(
+        replay,
+        lambda observations: np.tile(
+            np.array([[-1.0, 0.0]], dtype=np.float32),
+            (len(observations["obs"]), 1),
+        ),
+        round_trip,
+        policy_name="zero",
+    )
+    np.testing.assert_array_equal(replay.obstacle_centers, manifest.obstacle_centers)
+    np.testing.assert_allclose(
+        replay.state.info["obstacle_physics_position"][:, :2],
+        manifest.obstacle_centers[:, 0],
+        atol=1.0e-6,
+    )
+    assert result["manifest_sha256"] == manifest.to_dict()["sha256"]
+    assert result["metrics"]["timeout_rate"] == 1.0
+    replay.close()
 
 
 def test_real_mujoco_obstacle_task_exposes_normalized_fixed_beam_lidar() -> None:

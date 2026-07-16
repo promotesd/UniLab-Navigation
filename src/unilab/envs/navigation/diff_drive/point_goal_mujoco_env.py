@@ -192,19 +192,15 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             (count, 1),
         )
 
-        initial_yaw = self._rng.uniform(
-            -np.pi,
-            np.pi,
-            size=count,
-        )
+        initial_states = self._sample_initial_robot_states(indices)
 
         # Free-joint qpos layout:
         # [x, y, z, qw, qx, qy, qz, left_wheel, right_wheel]
-        qpos[:, 0] = 0.0
-        qpos[:, 1] = 0.0
+        qpos[:, 0:2] = initial_states[:, 0:2]
         qpos[:, 3:7] = np_yaw_to_quat(
-            initial_yaw
+            initial_states[:, 2]
         )
+        qpos = self._prepare_reset_qpos(indices, qpos)
 
         self._backend.set_state(
             indices,
@@ -216,7 +212,10 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             indices
         )
 
-        self.goals[indices] = self._sample_goal_positions(self.robot_states[indices, :2])
+        self.goals[indices] = self._sample_goal_positions(
+            self.robot_states[indices, :2],
+            env_indices=indices,
+        )
 
         self.normalized_actions[indices] = 0.0
         self.velocity_commands[indices] = 0.0
@@ -292,6 +291,21 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             base_yaw[env_indices]
         )
 
+    def _sample_initial_robot_states(self, env_indices: np.ndarray) -> np.ndarray:
+        """Sample reset starts; base PointGoal starts at the world origin."""
+        states = np.zeros((len(env_indices), 3), dtype=get_global_dtype())
+        states[:, 2] = self._rng.uniform(-np.pi, np.pi, size=len(env_indices))
+        return states
+
+    def _prepare_reset_qpos(
+        self,
+        env_indices: np.ndarray,
+        qpos: np.ndarray,
+    ) -> np.ndarray:
+        """Allow task variants to append per-environment scene state."""
+        del env_indices
+        return qpos
+
     def _set_initial_conditions(
         self,
         robot_states: np.ndarray,
@@ -303,6 +317,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
         qpos[:, 0:2] = robot_states[:, 0:2]
         qpos[:, 3:7] = np_yaw_to_quat(robot_states[:, 2])
         indices = np.arange(self.num_envs, dtype=np.int32)
+        qpos = self._prepare_reset_qpos(indices, qpos)
         self._backend.set_state(indices, qpos, qvel)
         self._sync_robot_states_from_backend()
         self.goals[:] = goals

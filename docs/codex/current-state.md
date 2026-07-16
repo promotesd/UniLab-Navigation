@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M6.4 valid randomization
+- Earliest incomplete milestone after this update: M7.1 SAC adapter
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -333,14 +333,58 @@ M6.2 terminal rates (`0.859375` success, `0.140625` collision, `0.0` timeout),
 as expected because the existing goal-only heuristic does not yet consume the
 new beams.
 
-## Next milestone: M6.4 valid randomization
+## M6.4 valid randomization
+
+Status: complete.
+
+Delivered:
+
+- deterministic per-environment obstacle-center and robot-start sampling with
+  bounded vectorized rejection;
+- start/obstacle and goal/obstacle clearance checks for every layout; the
+  current scene has exactly one obstacle, so no obstacle/obstacle pair exists;
+- planar obstacle slide-joint state in every MuJoCo environment, with a real
+  frame-position sensor proving sampled metadata and collision geometry match;
+- fixed obstacle count, half extents, LiDAR beam count, and observation shape;
+- seeded LiDAR noise enabled in the formal obstacle Hydra task;
+- evaluator manifests extended with obstacle centers and half extents while
+  preserving the prior obstacle-free JSON/hash format;
+- exact obstacle-layout manifest replay into a different environment seed;
+- a stateful LiDAR heuristic that turns toward the clearer side of a frontal
+  hazard and releases after clearance;
+- analytical, config, serialization, deterministic replay, and real MuJoCo
+  integration coverage.
+
+Formal fixed-manifest real MuJoCo evidence:
+
+- episodes: `4,096`;
+- layout/manifest seed: `73`;
+- autoreset: disabled;
+- manifest SHA-256:
+  `f872f11d57797c51dd255691a669d7ba39dbc7050a8880482cbd7be8a22ae30e`.
+
+| Policy | Success | Collision | Timeout | SPL mean |
+| --- | ---: | ---: | ---: | ---: |
+| Goal-only heuristic | 0.972168 | 0.027832 | 0.000000 | 0.944502 |
+| LiDAR heuristic | 0.983154 | 0.002686 | 0.014160 | 0.955176 |
+
+Validation:
+
+```text
+Ruff: clean
+complete navigation suite: 123 passed
+JSON: /tmp/point_goal_m64_randomized_4096.json
+JSON SHA-256: 051ceebd217aa69385bdad131b59b8f5daac7ab273fbec30e1de8a0aa3acfe9c
+```
+
+The evidence JSON remains under `/tmp` and is not committed.
+
+## Next milestone: M7.1 SAC adapter
 
 Required work:
 
-- randomize obstacle layouts without obstacle/obstacle, start/obstacle, or
-  goal/obstacle overlaps;
-- preserve fixed shapes and deterministic seed replay;
-- integrate configured LiDAR noise/randomization without backend-specific
-  observation changes;
-- update the heuristic baseline to use obstacle observations;
-- add analytical, real MuJoCo, and fixed-manifest evaluation evidence.
+- preserve the PointGoal task, manifest, and evaluator contracts;
+- add SAC training, checkpoint save/load, and deterministic inference;
+- separate algorithm-specific configuration from task configuration;
+- compare SAC to PPO using identical held-out fixed episodes and seeds;
+- add unit, integration, training-smoke, and checkpoint-reload coverage.

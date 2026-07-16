@@ -50,6 +50,8 @@ class PointGoalManifest:
     seed: int
     robot_states: np.ndarray
     goals: np.ndarray
+    obstacle_centers: np.ndarray | None = None
+    obstacle_half_extents: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         states = np.asarray(self.robot_states, dtype=np.float32)
@@ -64,6 +66,25 @@ class PointGoalManifest:
             raise ValueError("manifest must contain at least one episode")
         if not np.all(np.isfinite(states)) or not np.all(np.isfinite(goals)):
             raise ValueError("manifest values must be finite")
+        centers = self.obstacle_centers
+        half_extents = self.obstacle_half_extents
+        if (centers is None) != (half_extents is None):
+            raise ValueError("manifest obstacle centers and half extents must be provided together")
+        if centers is not None and half_extents is not None:
+            centers = np.asarray(centers, dtype=np.float32)
+            half_extents = np.asarray(half_extents, dtype=np.float32)
+            if centers.ndim != 3 or centers.shape[0] != len(states) or centers.shape[2] != 2:
+                raise ValueError(
+                    "manifest obstacle_centers must have shape (episodes, obstacles, 2)"
+                )
+            if half_extents.shape != centers.shape:
+                raise ValueError("manifest obstacle_half_extents must match obstacle_centers")
+            if not np.all(np.isfinite(centers)) or not np.all(np.isfinite(half_extents)):
+                raise ValueError("manifest obstacle geometry must be finite")
+            if np.any(half_extents <= 0.0):
+                raise ValueError("manifest obstacle half extents must be positive")
+            object.__setattr__(self, "obstacle_centers", centers.copy())
+            object.__setattr__(self, "obstacle_half_extents", half_extents.copy())
         object.__setattr__(self, "robot_states", states.copy())
         object.__setattr__(self, "goals", goals.copy())
 
@@ -72,14 +93,20 @@ class PointGoalManifest:
         return len(self.robot_states)
 
     def to_dict(self) -> dict[str, Any]:
-        conditions = [
-            {
+        conditions = []
+        for episode_id in range(self.episode_count):
+            condition = {
                 "episode_id": episode_id,
                 "robot_state": self.robot_states[episode_id].tolist(),
                 "goal_position": self.goals[episode_id].tolist(),
             }
-            for episode_id in range(self.episode_count)
-        ]
+            if self.obstacle_centers is not None:
+                assert self.obstacle_half_extents is not None
+                condition["obstacle_centers"] = self.obstacle_centers[episode_id].tolist()
+                condition["obstacle_half_extents"] = self.obstacle_half_extents[
+                    episode_id
+                ].tolist()
+            conditions.append(condition)
         payload: dict[str, Any] = {
             "seed": self.seed,
             "episode_count": self.episode_count,
@@ -101,7 +128,31 @@ class PointGoalManifest:
             raise ValueError("manifest episode_id values must be contiguous and zero-based")
         states = [condition["robot_state"] for condition in conditions]
         goals = [condition["goal_position"] for condition in conditions]
-        manifest = cls(seed=int(payload["seed"]), robot_states=states, goals=goals)
+        has_obstacles = ["obstacle_centers" in condition for condition in conditions]
+        has_half_extents = [
+            "obstacle_half_extents" in condition for condition in conditions
+        ]
+        if has_obstacles != has_half_extents:
+            raise ValueError("manifest obstacle centers and half extents must be paired")
+        if any(has_obstacles) and not all(has_obstacles):
+            raise ValueError("manifest obstacle layouts must be present for every episode")
+        centers = (
+            [condition["obstacle_centers"] for condition in conditions]
+            if all(has_obstacles)
+            else None
+        )
+        half_extents = (
+            [condition["obstacle_half_extents"] for condition in conditions]
+            if all(has_obstacles)
+            else None
+        )
+        manifest = cls(
+            seed=int(payload["seed"]),
+            robot_states=states,
+            goals=goals,
+            obstacle_centers=centers,
+            obstacle_half_extents=half_extents,
+        )
         expected_hash = payload.get("sha256")
         if expected_hash is not None and expected_hash != manifest.to_dict()["sha256"]:
             raise ValueError("manifest sha256 does not match its initial conditions")
@@ -175,11 +226,31 @@ def evaluate_point_goal_policy(
         raise ValueError("PointGoal evaluation requires a positive episode limit")
 
     env.set_autoreset(False)
-    state = env.reset_to_initial_conditions(manifest.robot_states, manifest.goals)
+    if manifest.obstacle_centers is None:
+        state = env.reset_to_initial_conditions(manifest.robot_states, manifest.goals)
+    else:
+        reset_with_layout = getattr(env, "reset_to_initial_conditions_with_layout", None)
+        if not callable(reset_with_layout):
+            raise ValueError("manifest has obstacle layouts but the environment cannot apply them")
+        assert manifest.obstacle_half_extents is not None
+        state = reset_with_layout(
+            manifest.robot_states,
+            manifest.goals,
+            manifest.obstacle_centers,
+            manifest.obstacle_half_extents,
+        )
     if not np.allclose(env.robot_states, manifest.robot_states, atol=1.0e-5, rtol=0.0):
         raise RuntimeError("environment did not apply the manifest robot states")
     if not np.allclose(env.goals, manifest.goals, atol=1.0e-6, rtol=0.0):
         raise RuntimeError("environment did not apply the manifest goal positions")
+    if manifest.obstacle_centers is not None:
+        if not np.allclose(
+            env.obstacle_centers,
+            manifest.obstacle_centers,
+            atol=1.0e-6,
+            rtol=0.0,
+        ):
+            raise RuntimeError("environment did not apply the manifest obstacle layouts")
 
     initial_distance = np.linalg.norm(manifest.goals - manifest.robot_states[:, :2], axis=1)
     final_distance = np.full(manifest.episode_count, np.nan, dtype=np.float64)

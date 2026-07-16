@@ -4,9 +4,11 @@ import numpy as np
 
 from unilab.envs.navigation.diff_drive.controllers import (
     HeuristicPointGoalPolicy,
+    LidarHeuristicPointGoalPolicy,
     RandomPointGoalPolicy,
     ZeroPointGoalPolicy,
 )
+from unilab.envs.navigation.diff_drive.lidar import PlanarLidarCfg
 from unilab.evaluation.point_goal import PpoPointGoalPolicy
 
 
@@ -37,6 +39,26 @@ def test_heuristic_policy_drives_straight_and_rotates_in_place() -> None:
     np.testing.assert_allclose(actions[0], np.array([1.0, 0.0]), atol=1.0e-6)
     assert actions[1, 0] == -1.0
     assert abs(actions[1, 1]) == 1.0
+
+
+def test_lidar_heuristic_turns_toward_clear_side_then_releases() -> None:
+    cfg = PlanarLidarCfg(beam_count=8, angle_min=-np.pi, angle_max=np.pi)
+    policy = LidarHeuristicPointGoalPolicy(cfg)
+    actor = np.ones((1, 13), dtype=np.float32)
+    actor[:, 1] = 0.0
+    actor[:, 2] = 1.0
+    actor[:, 3:5] = 0.0
+    actor[:, 5 + 4] = 0.05
+    actor[:, 5 + 5 :] = 0.2
+    blocked = policy({"obs": actor, "critic": actor.copy()})
+    assert blocked[0, 0] == 0.0
+    assert blocked[0, 1] == -1.0
+
+    actor[:, 5:] = 1.0
+    clear = blocked
+    for _ in range(policy.minimum_avoid_steps):
+        clear = policy({"obs": actor, "critic": actor.copy()})
+    np.testing.assert_allclose(clear[0], [1.0, 0.0], atol=1.0e-6)
 
 
 def test_ppo_policy_adapts_tensor_like_output_to_numpy() -> None:
