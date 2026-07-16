@@ -8,6 +8,7 @@ import pytest
 
 from unilab.base import registry
 from unilab.envs.navigation import (
+    AnalyticalWheelOdometryPlugin,
     DeadReckoningCfg,
     DeadReckoningPoseProvider,
     GroundTruthPosePacket,
@@ -16,12 +17,15 @@ from unilab.envs.navigation import (
     LocalizationPacket,
     NoisyPoseCfg,
     NoisyPoseProvider,
+    OnlineEstimatorCfg,
+    OnlineEstimatorPoseProvider,
     PoseEstimate,
     PoseStatus,
     RecordedPoseCfg,
     RecordedPoseProvider,
     RecordedPoseStream,
     WheelOdometryPacket,
+    create_online_estimator_plugin,
     read_recorded_pose_stream,
     write_recorded_pose_stream,
 )
@@ -622,3 +626,156 @@ def test_registry_loads_recorded_pose_stream_from_nested_config(tmp_path) -> Non
     state = env.init_state()
     np.testing.assert_allclose(state.info["localization_pose"][:, 0], 0.0)
     env.close()
+
+
+def test_online_estimator_applies_publish_cadence_after_processing_packets() -> None:
+    cfg = OnlineEstimatorCfg(update_interval_steps=2)
+    plugin = AnalyticalWheelOdometryPlugin(
+        cfg,
+        parent_frame="odom",
+        child_frame="base_link",
+    )
+    provider = OnlineEstimatorPoseProvider(plugin, cfg)
+    provider.reset(
+        packet(np.array([0.0]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+        np.array([0], dtype=np.int32),
+    )
+    first = provider.update(
+        packet(np.array([1.0]), np.ones(1), np.ones(1), np.zeros(1), None)
+    )
+    np.testing.assert_allclose(first.pose, [[0.0, 0.0, 0.0]])
+    np.testing.assert_allclose(first.timestamp_s, [0.0])
+    second = provider.update(
+        packet(np.array([2.0]), np.ones(1), np.ones(1), np.zeros(1), None)
+    )
+    np.testing.assert_allclose(second.pose, [[2.0, 0.0, 0.0]], atol=1.0e-6)
+    np.testing.assert_allclose(second.timestamp_s, [2.0])
+
+
+def test_online_estimator_applies_latency_dropout_and_staleness() -> None:
+    latency_cfg = OnlineEstimatorCfg(latency_steps=1)
+    latency_provider = OnlineEstimatorPoseProvider(
+        AnalyticalWheelOdometryPlugin(
+            latency_cfg,
+            parent_frame="odom",
+            child_frame="base_link",
+        ),
+        latency_cfg,
+    )
+    reset_packet = packet(
+        np.array([0.0]), np.zeros(1), np.zeros(1), np.zeros(1), None
+    )
+    latency_provider.reset(reset_packet, np.array([0], dtype=np.int32))
+    delayed = latency_provider.update(
+        packet(np.array([1.0]), np.ones(1), np.ones(1), np.zeros(1), None)
+    )
+    np.testing.assert_allclose(delayed.pose, [[0.0, 0.0, 0.0]])
+    delayed = latency_provider.update(
+        packet(np.array([2.0]), np.ones(1), np.ones(1), np.zeros(1), None)
+    )
+    np.testing.assert_allclose(delayed.pose, [[1.0, 0.0, 0.0]], atol=1.0e-6)
+
+    unhealthy_cfg = OnlineEstimatorCfg(
+        latency_steps=1,
+        dropout_probability=1.0,
+        max_staleness_s=0.5,
+    )
+    unhealthy = OnlineEstimatorPoseProvider(
+        AnalyticalWheelOdometryPlugin(
+            unhealthy_cfg,
+            parent_frame="odom",
+            child_frame="base_link",
+        ),
+        unhealthy_cfg,
+    )
+    initial = unhealthy.reset(reset_packet, np.array([0], dtype=np.int32))
+    assert initial.status[0] == PoseStatus.LOST
+    stale = unhealthy.update(
+        packet(np.array([1.0]), np.ones(1), np.ones(1), np.zeros(1), None)
+    )
+    assert stale.status[0] == PoseStatus.LOST
+    assert not stale.valid[0]
+
+
+def test_online_estimator_dynamic_loading_and_close_lifecycle() -> None:
+    cfg = OnlineEstimatorCfg()
+    plugin = create_online_estimator_plugin(
+        cfg,
+        parent_frame="odom",
+        child_frame="base_link",
+    )
+    assert isinstance(plugin, AnalyticalWheelOdometryPlugin)
+    provider = OnlineEstimatorPoseProvider(plugin, cfg)
+    provider.reset(
+        packet(np.array([0.0]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+        np.array([0], dtype=np.int32),
+    )
+    provider.close()
+    assert plugin.closed
+    provider.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        provider.update(
+            packet(np.array([0.1]), np.full(1, 0.1), np.zeros(1), np.zeros(1), None)
+        )
+    with pytest.raises(ValueError, match="cannot resolve"):
+        create_online_estimator_plugin(
+            OnlineEstimatorCfg(plugin="missing.module:factory"),
+            parent_frame="odom",
+            child_frame="base_link",
+        )
+
+
+def test_real_mujoco_online_estimator_honors_latency_and_closes_plugin() -> None:
+    cfg = DiffDrivePointGoalCfg(
+        localization=LocalizationCfg(
+            provider="online_estimator",
+            parent_frame="odom",
+            online_estimator=OnlineEstimatorCfg(
+                latency_steps=1,
+                dead_reckoning=DeadReckoningCfg(linear_velocity_bias=0.2),
+            ),
+        )
+    )
+    env = DiffDrivePointGoalMujocoEnv(cfg=cfg, num_envs=1)
+    assert isinstance(env.pose_provider, OnlineEstimatorPoseProvider)
+    plugin = env.pose_provider.plugin
+    assert isinstance(plugin, AnalyticalWheelOdometryPlugin)
+    env.reset_to_initial_conditions(
+        np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        np.array([[1.0, 0.0]], dtype=np.float32),
+    )
+    first = env.step(np.array([[-1.0, 0.0]], dtype=np.float32))
+    np.testing.assert_allclose(first.info["localization_pose"][0, 0], 0.0, atol=1.0e-6)
+    second = env.step(np.array([[-1.0, 0.0]], dtype=np.float32))
+    np.testing.assert_allclose(second.info["localization_pose"][0, 0], 0.02, atol=1.0e-5)
+    env.close()
+    assert plugin.closed
+
+
+def test_registry_builds_online_estimator_from_nested_config() -> None:
+    registry.ensure_registries()
+    env = registry.make(
+        "DiffDrivePointGoal",
+        sim_backend="mujoco",
+        env_cfg_override={
+            "localization": {
+                "provider": "online_estimator",
+                "parent_frame": "odom",
+                "online_estimator": {
+                    "update_interval_steps": 2,
+                    "latency_steps": 1,
+                    "dropout_probability": 0.25,
+                    "seed": 47,
+                    "dead_reckoning": {"linear_velocity_bias": 0.1},
+                },
+            }
+        },
+        num_envs=2,
+    )
+    assert isinstance(env.pose_provider, OnlineEstimatorPoseProvider)
+    assert env.pose_provider.cfg.update_interval_steps == 2
+    assert env.pose_provider.cfg.dead_reckoning.linear_velocity_bias == 0.1
+    plugin = env.pose_provider.plugin
+    env.close()
+    assert isinstance(plugin, AnalyticalWheelOdometryPlugin)
+    assert plugin.closed

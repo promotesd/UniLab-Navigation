@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M8.4 online estimator plugin
+- Earliest incomplete milestone after this update: M8.5 ROS2 bridge
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -704,14 +704,67 @@ recorded report SHA-256: a37d727cb5a465a9e1769935dd21d837a6dc9b5b1de96721fe8b280
 All generated recordings, manifests, and reports remain under `/tmp` and are
 not committed.
 
-## Next milestone: M8.4 online estimator plugin
+## M8.4 online estimator plugin
+
+Status: complete.
+
+Delivered:
+
+- dependency-free `OnlineEstimatorPlugin` lifecycle contract over typed
+  `LocalizationPacket` input and validated `PoseEstimate` output;
+- trusted `module:factory` resolution with structural method/frame checks and
+  no concrete estimator or ROS import in the navigation environment;
+- analytical wheel-odometry reference plugin using the existing deterministic
+  dead-reckoning core;
+- UniLab-owned publication cadence while every packet is still processed;
+- configurable step latency, seeded per-environment dropout, maximum staleness,
+  monotonic/future timestamp rejection, batch/frame invariants, and partial
+  reset-safe history replacement;
+- `LOST` status and invalidity for dropout/stale outputs without changing the
+  finite fixed-shape pose/covariance observation contract;
+- explicit plugin resource ownership, idempotent shutdown, and environment
+  propagation through `DiffDrivePointGoalEnv.close()`;
+- nested registry/Hydra configuration for plugin path, scheduling, health, seed,
+  and analytical dead-reckoning parameters;
+- analytical cadence/latency/dropout/staleness/loading/close tests plus real
+  MuJoCo latency and registry lifecycle integration.
+
+Bounded real MuJoCo online-estimator run:
+
+- episodes: `128`, manifest seed `8301`, internal manifest SHA-256
+  `9ae7429017c198c13c8a9951e86da9fd27a03c60bbb82fd8fd4becff16625b6a`;
+- plugin: analytical wheel odometry;
+- publish interval: `2` steps; latency: `1` step; max staleness: `0.5 s`;
+- linear/angular velocity noise: `0.02 m/s` / `0.01 rad/s`;
+- linear/angular bias: `0.01 m/s` / `0.005 rad/s`;
+- success `0.328125`, timeout `0.671875`, SPL `0.309`;
+- autoreset disabled and task metrics kept on MuJoCo truth.
+
+This is a boundary/lifecycle sensitivity run, not a claim about a production
+SLAM algorithm.
+
+Validation:
+
+```text
+Ruff: clean
+focused localization/plugin tests: 24 passed
+targeted lifecycle/MuJoCo/registry tests: 43 passed
+complete navigation suite: 158 passed
+report: /tmp/unilab_m84_online_smoke.json
+report SHA-256: 71feb8d80ac2d44d07edd4751a7d59cef39676b1708c846c99bd4fbab7bbf455
+```
+
+The smoke report remains under `/tmp` and is not committed.
+
+## Next milestone: M8.5 ROS2 bridge
 
 Required work:
 
-- define lifecycle and state ownership for a dependency-free online estimator
-  plugin boundary;
-- consume typed sensor packets without importing a concrete SLAM package;
-- define update cadence, latency, dropout, reset, covariance, status, and frame
-  behavior;
-- add an analytical reference plugin and real MuJoCo integration tests;
-- keep ROS2 imports outside the core environment package.
+- keep ROS2 conversion in an optional bridge package with no `rclpy` import in
+  core navigation modules;
+- define odometry/localization message conversion, stamps, frames, covariance,
+  QoS, TF availability, message age, and dropout behavior;
+- provide dependency-free message-shaped test doubles so core tests do not
+  require a ROS2 installation;
+- add bridge unit tests and a bounded transport-free navigation integration
+  smoke before any live ROS graph is required.

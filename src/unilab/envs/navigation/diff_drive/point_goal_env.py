@@ -464,6 +464,13 @@ class DiffDrivePointGoalEnv(NpEnv):
         """Return task collision terminals; obstacle-free tasks have none."""
         return np.zeros(self.num_envs, dtype=bool)
 
+    def close(self) -> None:
+        """Release localization-plugin and backend-owned resources."""
+        close_provider = getattr(self.pose_provider, "close", None)
+        if callable(close_provider):
+            close_provider()
+        super().close()
+
     def _collision_penalty(self, collision: np.ndarray) -> np.ndarray:
         """Return a per-environment collision reward penalty."""
         del collision

@@ -1,6 +1,7 @@
 """Navigation environment registry bootstrap."""
 
 from .localization import (
+    AnalyticalWheelOdometryPlugin,
     DeadReckoningCfg,
     DeadReckoningPoseProvider,
     GroundTruthPosePacket,
@@ -9,6 +10,9 @@ from .localization import (
     LocalizationPacket,
     NoisyPoseCfg,
     NoisyPoseProvider,
+    OnlineEstimatorCfg,
+    OnlineEstimatorPlugin,
+    OnlineEstimatorPoseProvider,
     PoseEstimate,
     PoseProvider,
     PoseStatus,
@@ -16,6 +20,7 @@ from .localization import (
     RecordedPoseProvider,
     RecordedPoseStream,
     WheelOdometryPacket,
+    create_online_estimator_plugin,
     create_pose_provider,
     read_recorded_pose_stream,
     write_recorded_pose_stream,
@@ -26,6 +31,7 @@ __unilab_registry_modules__ = (
 )
 
 __all__ = [
+    "AnalyticalWheelOdometryPlugin",
     "GroundTruthPoseProvider",
     "GroundTruthPosePacket",
     "DeadReckoningCfg",
@@ -34,6 +40,9 @@ __all__ = [
     "LocalizationCfg",
     "NoisyPoseCfg",
     "NoisyPoseProvider",
+    "OnlineEstimatorCfg",
+    "OnlineEstimatorPlugin",
+    "OnlineEstimatorPoseProvider",
     "PoseEstimate",
     "PoseProvider",
     "PoseStatus",
@@ -42,6 +51,7 @@ __all__ = [
     "RecordedPoseStream",
     "WheelOdometryPacket",
     "create_pose_provider",
+    "create_online_estimator_plugin",
     "read_recorded_pose_stream",
     "write_recorded_pose_stream",
 ]

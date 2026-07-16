@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
+from collections import deque
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
@@ -820,6 +822,283 @@ class RecordedPoseProvider:
         )
 
 
+class OnlineEstimatorPlugin(Protocol):
+    """Dependency-free lifecycle contract implemented by online estimators."""
+
+    parent_frame: str
+    child_frame: str
+
+    def reset(
+        self,
+        packet: LocalizationPacket,
+        env_indices: np.ndarray,
+    ) -> PoseEstimate:
+        """Reset estimator-owned state for selected environments."""
+
+    def update(self, packet: LocalizationPacket) -> PoseEstimate:
+        """Consume one typed sensor packet batch and return the newest estimate."""
+
+    def close(self) -> None:
+        """Release plugin-owned resources."""
+
+
+@dataclass
+class OnlineEstimatorCfg:
+    """UniLab-owned scheduling and failure semantics for an online plugin."""
+
+    plugin: str = (
+        "unilab.envs.navigation.localization:AnalyticalWheelOdometryPlugin"
+    )
+    update_interval_steps: int = 1
+    latency_steps: int = 0
+    dropout_probability: float = 0.0
+    seed: int = 1
+    max_staleness_s: float | None = None
+    dead_reckoning: DeadReckoningCfg = field(default_factory=DeadReckoningCfg)
+
+    def validate(self) -> None:
+        module_name, separator, symbol_name = self.plugin.partition(":")
+        if not separator or not module_name or not symbol_name:
+            raise ValueError("online-estimator plugin must use module:factory")
+        if self.update_interval_steps <= 0:
+            raise ValueError("online-estimator update_interval_steps must be positive")
+        if self.latency_steps < 0:
+            raise ValueError("online-estimator latency_steps must be non-negative")
+        if (
+            not np.isfinite(self.dropout_probability)
+            or not 0.0 <= self.dropout_probability <= 1.0
+        ):
+            raise ValueError("online-estimator dropout_probability must be in [0, 1]")
+        if self.seed < 0:
+            raise ValueError("online-estimator seed must be non-negative")
+        if self.max_staleness_s is not None:
+            if not np.isfinite(self.max_staleness_s) or self.max_staleness_s < 0.0:
+                raise ValueError("online-estimator max_staleness_s must be non-negative")
+        self.dead_reckoning.validate()
+
+
+class AnalyticalWheelOdometryPlugin:
+    """Reference online plugin backed by analytical wheel dead reckoning."""
+
+    def __init__(
+        self,
+        cfg: OnlineEstimatorCfg,
+        *,
+        parent_frame: str,
+        child_frame: str,
+    ) -> None:
+        self.parent_frame = parent_frame
+        self.child_frame = child_frame
+        self._provider = DeadReckoningPoseProvider(
+            cfg.dead_reckoning,
+            parent_frame=parent_frame,
+            child_frame=child_frame,
+        )
+        self.closed = False
+
+    def reset(
+        self,
+        packet: LocalizationPacket,
+        env_indices: np.ndarray,
+    ) -> PoseEstimate:
+        if self.closed:
+            raise RuntimeError("online estimator plugin is closed")
+        return self._provider.reset(packet, env_indices)
+
+    def update(self, packet: LocalizationPacket) -> PoseEstimate:
+        if self.closed:
+            raise RuntimeError("online estimator plugin is closed")
+        return self._provider.update(packet)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _replace_estimate_indices(
+    base: PoseEstimate,
+    replacement: PoseEstimate,
+    indices: np.ndarray,
+) -> PoseEstimate:
+    if (
+        base.parent_frame != replacement.parent_frame
+        or base.child_frame != replacement.child_frame
+        or len(base.pose) != len(replacement.pose)
+    ):
+        raise ValueError("online estimator changed frame or batch contract")
+    pose = base.pose.copy()
+    covariance = base.covariance.copy()
+    status = base.status.copy()
+    timestamp = base.timestamp_s.copy()
+    pose[indices] = replacement.pose[indices]
+    covariance[indices] = replacement.covariance[indices]
+    status[indices] = replacement.status[indices]
+    timestamp[indices] = replacement.timestamp_s[indices]
+    return PoseEstimate(
+        pose=pose,
+        covariance=covariance,
+        valid=np.isin(status, [PoseStatus.TRACKING, PoseStatus.DEGRADED]),
+        status=status,
+        timestamp_s=timestamp,
+        parent_frame=base.parent_frame,
+        child_frame=base.child_frame,
+    )
+
+
+class OnlineEstimatorPoseProvider:
+    """Own online scheduling, latency, dropout, staleness, and shutdown."""
+
+    def __init__(
+        self,
+        plugin: OnlineEstimatorPlugin,
+        cfg: OnlineEstimatorCfg,
+    ) -> None:
+        cfg.validate()
+        _validate_frame_pair(plugin.parent_frame, plugin.child_frame)
+        self.plugin = plugin
+        self.cfg = cfg
+        self.parent_frame = plugin.parent_frame
+        self.child_frame = plugin.child_frame
+        self._rng = np.random.default_rng(cfg.seed)
+        self._update_count = 0
+        self._latest_plugin_raw: PoseEstimate | None = None
+        self._published_raw: PoseEstimate | None = None
+        self._latency_queue: deque[PoseEstimate] | None = None
+        self._closed = False
+
+    def reset(
+        self,
+        packet: LocalizationPacket,
+        env_indices: np.ndarray,
+    ) -> PoseEstimate:
+        self._ensure_open()
+        indices = np.asarray(env_indices, dtype=np.int32)
+        raw = self.plugin.reset(packet, indices)
+        self._validate_estimate(raw, packet.timestamp_s)
+        if self._published_raw is None:
+            self._latest_plugin_raw = raw
+            self._published_raw = raw
+            self._latency_queue = deque(
+                [raw] * (self.cfg.latency_steps + 1),
+                maxlen=self.cfg.latency_steps + 1,
+            )
+        else:
+            assert self._latest_plugin_raw is not None
+            unchanged = np.ones(len(packet.timestamp_s), dtype=bool)
+            unchanged[indices] = False
+            if np.any(
+                raw.timestamp_s[unchanged]
+                < self._latest_plugin_raw.timestamp_s[unchanged]
+            ):
+                raise ValueError(
+                    "online estimator timestamps moved backward outside reset environments"
+                )
+            self._latest_plugin_raw = _replace_estimate_indices(
+                self._latest_plugin_raw,
+                raw,
+                indices,
+            )
+            self._published_raw = _replace_estimate_indices(
+                self._published_raw,
+                raw,
+                indices,
+            )
+            assert self._latency_queue is not None
+            self._latency_queue = deque(
+                [
+                    _replace_estimate_indices(estimate, raw, indices)
+                    for estimate in self._latency_queue
+                ],
+                maxlen=self.cfg.latency_steps + 1,
+            )
+        assert self._latency_queue is not None
+        return self._apply_health(self._latency_queue[0], packet.timestamp_s)
+
+    def update(self, packet: LocalizationPacket) -> PoseEstimate:
+        self._ensure_open()
+        if self._published_raw is None or self._latency_queue is None:
+            raise RuntimeError("online estimator provider must be reset before update")
+        raw = self.plugin.update(packet)
+        self._validate_estimate(raw, packet.timestamp_s)
+        assert self._latest_plugin_raw is not None
+        if np.any(raw.timestamp_s < self._latest_plugin_raw.timestamp_s):
+            raise ValueError("online estimator timestamps must be monotonic")
+        self._latest_plugin_raw = raw
+        self._update_count += 1
+        if self._update_count % self.cfg.update_interval_steps == 0:
+            self._published_raw = raw
+        self._latency_queue.append(self._published_raw)
+        return self._apply_health(self._latency_queue[0], packet.timestamp_s)
+
+    def close(self) -> None:
+        if not self._closed:
+            self.plugin.close()
+            self._closed = True
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("online estimator provider is closed")
+
+    def _validate_estimate(
+        self,
+        estimate: PoseEstimate,
+        query_timestamp_s: np.ndarray,
+    ) -> None:
+        if len(estimate.pose) != len(query_timestamp_s):
+            raise ValueError("online estimator changed environment batch size")
+        if (
+            estimate.parent_frame != self.parent_frame
+            or estimate.child_frame != self.child_frame
+        ):
+            raise ValueError("online estimator changed its frame contract")
+        if np.any(estimate.timestamp_s > query_timestamp_s + 1.0e-9):
+            raise ValueError("online estimator produced a future timestamp")
+
+    def _apply_health(
+        self,
+        estimate: PoseEstimate,
+        query_timestamp_s: np.ndarray,
+    ) -> PoseEstimate:
+        status = estimate.status.copy()
+        dropout = self._rng.random(len(status)) < self.cfg.dropout_probability
+        status[dropout] = PoseStatus.LOST
+        if self.cfg.max_staleness_s is not None:
+            age = query_timestamp_s - estimate.timestamp_s
+            status[age > self.cfg.max_staleness_s] = PoseStatus.LOST
+        return PoseEstimate(
+            pose=estimate.pose,
+            covariance=estimate.covariance,
+            valid=np.isin(status, [PoseStatus.TRACKING, PoseStatus.DEGRADED]),
+            status=status,
+            timestamp_s=estimate.timestamp_s,
+            parent_frame=self.parent_frame,
+            child_frame=self.child_frame,
+        )
+
+
+def create_online_estimator_plugin(
+    cfg: OnlineEstimatorCfg,
+    *,
+    parent_frame: str,
+    child_frame: str,
+) -> OnlineEstimatorPlugin:
+    """Resolve one trusted ``module:factory`` plugin without core dependencies."""
+    cfg.validate()
+    module_name, _, symbol_name = cfg.plugin.partition(":")
+    try:
+        module = importlib.import_module(module_name)
+        factory = getattr(module, symbol_name)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(f"cannot resolve online-estimator plugin {cfg.plugin!r}") from exc
+    plugin = factory(cfg, parent_frame=parent_frame, child_frame=child_frame)
+    for method_name in ("reset", "update", "close"):
+        if not callable(getattr(plugin, method_name, None)):
+            raise TypeError(f"online-estimator plugin is missing callable {method_name}")
+    for frame_name in ("parent_frame", "child_frame"):
+        if not isinstance(getattr(plugin, frame_name, None), str):
+            raise TypeError(f"online-estimator plugin is missing string {frame_name}")
+    return plugin
+
+
 @dataclass
 class LocalizationCfg:
     """Select and configure the navigation pose provider."""
@@ -830,6 +1109,7 @@ class LocalizationCfg:
     noisy_pose: NoisyPoseCfg = field(default_factory=NoisyPoseCfg)
     dead_reckoning: DeadReckoningCfg = field(default_factory=DeadReckoningCfg)
     recorded_pose: RecordedPoseCfg = field(default_factory=RecordedPoseCfg)
+    online_estimator: OnlineEstimatorCfg = field(default_factory=OnlineEstimatorCfg)
 
     def validate(self) -> None:
         if self.provider not in {
@@ -837,15 +1117,17 @@ class LocalizationCfg:
             "noisy_pose",
             "dead_reckoning",
             "recorded_pose",
+            "online_estimator",
         }:
             raise ValueError(
                 "localization provider must be ground_truth, noisy_pose, "
-                "dead_reckoning, or recorded_pose"
+                "dead_reckoning, recorded_pose, or online_estimator"
             )
         _validate_frame_pair(self.parent_frame, self.child_frame)
         self.noisy_pose.validate()
         self.dead_reckoning.validate()
         self.recorded_pose.validate()
+        self.online_estimator.validate()
         if self.provider == "dead_reckoning" and self.parent_frame == "map":
             raise ValueError("dead-reckoning parent_frame must identify an odometry frame")
         if self.provider in {"ground_truth", "noisy_pose"} and self.parent_frame != "map":
@@ -874,6 +1156,13 @@ def create_pose_provider(cfg: LocalizationCfg) -> PoseProvider:
             parent_frame=cfg.parent_frame,
             child_frame=cfg.child_frame,
         )
+    if cfg.provider == "online_estimator":
+        plugin = create_online_estimator_plugin(
+            cfg.online_estimator,
+            parent_frame=cfg.parent_frame,
+            child_frame=cfg.child_frame,
+        )
+        return OnlineEstimatorPoseProvider(plugin, cfg.online_estimator)
     assert cfg.recorded_pose.path is not None
     stream = read_recorded_pose_stream(cfg.recorded_pose.path)
     if stream.parent_frame != cfg.parent_frame or stream.child_frame != cfg.child_frame:
