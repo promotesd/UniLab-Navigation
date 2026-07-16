@@ -1,0 +1,6 @@
+interface:
+  display_name: "UniLab Test and Release"
+  short_description: "Run regression checks and publish a clean milestone"
+  default_prompt: "Use $unilab-test-release to validate the current milestone, exclude generated artifacts, commit intentionally, and push the active branch."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: "UniLab RL Adapter"
+  short_description: "Integrate PPO, SAC, TD3, and policy checkpoints"
+  default_prompt: "Use $unilab-rl-adapter to add the requested RL algorithm through a reusable adapter and compare it fairly with existing methods."
+policy:
+  allow_implicit_invocation: true

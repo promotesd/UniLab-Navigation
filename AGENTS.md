@@ -1,99 +1,160 @@
-# UniLab Agent Principles
+# UniLab Navigation + SLAM Project Instructions
 
-**Always use `uv run`, not python**.
+## Repository
 
-UniLab 是一个 **高性能、模块化、contract 驱动** 的 RL infrastructure 仓库。
+- Local root: `/home/xiaodudu/robot_study/UniLab-Navigation`
+- Git remote: `git@github.com:promotesd/UniLab-Navigation.git`
+- Active development branch: `feat/navigation-mvp`
+- Python/package manager: `uv`
+- Main simulator for the navigation MVP: MuJoCo
+- Primary training entrypoint: `scripts/train_rsl_rl.py`
 
-## Core Principles
+Always resolve paths from the repository root. Never assume the current shell directory is correct.
 
-1. **Contract first**: 不为了一次通过绕过 env / backend / runner contract。
-2. **Fix at owner layer**: `scripts/` 只组装流程，不承载长期业务规则。
-3. **Config first**: task / reward / backend 优先通过 Hydra + registry 表达。
-4. **Backend isolation**: MuJoCo / Motrix 差异留在 backend 适配层和配置层。
-5. **Evidence only**: support claim 只写仓库里已有的注册、配置、测试或 benchmark 事实。
-6. **Validate near risk**: 在最接近风险的边界补验证，不只跑顶层命令。
-7. **Cold-path asset access only**: asset/XML/model metadata 只允许在 init / materialization / cache 等低频路径处理；热路径不能解析 asset，也不能靠 `getattr` / `hasattr` 探测 backend 私有能力。
+## Project mission
 
-## High-Risk Areas
+Build and evaluate UniLab as a reusable robotics-learning framework that can:
 
-| 区域 | 不可破坏的不变量 |
-|------|----------------|
-| Env  | `NpEnvState.obs` 必须是 dict；`reset()` 返回 `(obs_dict, info_dict)`；`obs_groups_spec` 影响 wrapper 和 learner 维度。 |
-| Config / Reward | reward 通过 Hydra 注入；后端切换必须通过 `task=<task>/<backend>` 选择 owner YAML，`training.sim_backend` 只是 owner YAML 的身份字段，不能单独 override 来切后端。算法超参数直接走 YAML compose，不经 Python 层解释。 |
-| Backend | backend-specific 逻辑留在 backend / env 适配层，不向训练脚本扩散。env 层只能调用 `SimBackend`（`base.py`）中已声明的方法；若某方法只在 MuJoCo 或 Motrix 中存在，必须先将其加入 `SimBackend` 抽象接口（可抛 `NotImplementedError`），禁止直接在 env 里调用 backend 子类的私有方法（即"功能泄漏/feature leakage"）。新增 backend 专有能力时，需同步更新 `SimBackend`。 |
-| Asset / Metadata | `ASSETS_ROOT_PATH`、`model_file`、XML / asset 元数据只允许在 init / materialization / cache 等低频路径访问；`step/reset/domain randomization` 等热路径不得解析 asset 或基于 asset 元数据做运行时分支。 |
-| Asset / XML structure | `<keyframe>` 必须放在 task-level XML（`scene_*.xml` 或 `locomotion_task.xml` 等 fragment），**禁止放进 robot.xml**。robot.xml 是纯机器人描述（body / joint / actuator / sensor），跟 task / 场景无关；keyframe 是 task 起始姿态，属于场景或 task 资源。motrix 后端需要 keyframe 时通过 `scene.fragment_files` 引用 fragment XML。 |
-| Async | 不绕开 runner lifecycle，也不另起 collector / learner 同步协议。 |
-| Sim2Sim 契约 | 跨后端 play 时，影响策略 I/O / 网络结构的字段必须跨后端一致；不一致即 `CrossBackendIncompatibleError`。详见下方 Sim2Sim 章节。 |
+1. host navigation reinforcement-learning tasks through a stable environment contract;
+2. support multiple RL algorithms through adapters instead of task-specific rewrites;
+3. accept SLAM/localization outputs and simulated or recorded sensor streams through explicit interfaces;
+4. compare UniLab implementations with equivalent standalone implementations using a fair benchmark protocol.
 
-## Sim2Sim 跨后端配置契约
+Do not claim that UniLab is faster merely because it is the target framework. Treat speed as a hypothesis. A speed claim requires controlled measurements of throughput, wall-clock time, resource use, sample efficiency, and time-to-threshold.
 
-`src/unilab/training/sim2sim.py` 按 dotted path 维护三类字段：
+## Current implemented state
 
-- **DENYLIST**（差异即 `CrossBackendIncompatibleError`）：`algo.obs_groups`、`env.control_config.action_scale`、`algo.policy.actor_hidden_dims` / `critic_hidden_dims`、`algo.empirical_normalization` / `algo.obs_normalization`、`env.sampling_mode`。`env.*` 子集对**任一方向**的不对称出现也 fail-closed；`algo` 专属字段目标缺省时按设计跳过（跨算法合法）。
-- **WARNING_LIST**：`reward.*`、`env.control_config.simulate_action_latency`、`env.ctrl_dt`。
-- **ALLOWLIST**（自由覆盖）：`training.sim_backend`、`env.scene`、`training.play_steps`、`env.domain_rand`、`env.noise_config`、`env.commands.vel_limit`。
+The branch already contains:
 
-训练时 `ExperimentTracker.start()` 把上述字段写入 `run_config.json` 的 `contract_snapshot`（不改 checkpoint 格式，旧 run 无 snapshot 时 fallback + warning）；五个 play 入口在建 env 前调用 `resolve_sim2sim_config` 校验，并用 `policy_load_dim_guard` 包裹 checkpoint 加载以把维度不匹配的隐晦报错重抛为显式诊断。设 `training.sim2sim_strict=false` 可把 DENYLIST 差异降级为 warning（默认 `true`）。DENYLIST 字段在每个后端 owner 配置中显式声明并保持跨后端一致（范例：`conf/ppo/task/g1_walk_flat/{mujoco,motrix}.yaml`）；跨后端契约审计见 `scripts/audit_sim2sim_contracts.py`。
+- `DiffDrivePointGoalCfg`;
+- a vectorized PointGoal environment;
+- a real MuJoCo differential-drive model;
+- wheel-speed control;
+- registry integration for `DiffDrivePointGoal` + `mujoco`;
+- RSL-RL PPO wrapper integration;
+- Hydra task configuration;
+- episode navigation metrics;
+- PPO smoke training and TensorBoard metric validation.
 
-## Pointers
+Do not reimplement these components. Inspect them first and extend them.
 
-- PPO: `scripts/train_rsl_rl.py`
-- MLX PPO: `scripts/train_mlx_ppo.py`
-- APPO: `scripts/train_appo.py`
-- SAC / TD3: `scripts/train_offpolicy.py`
-- env contract: `src/unilab/base/np_env.py`
-- backend contract: `src/unilab/base/backend/base.py`
-- training run helpers: `src/unilab/training/run.py`
-- visualization helpers: `src/unilab/visualization/`
-- shared numeric helpers: `src/unilab/utils/rotation.py`, `src/unilab/utils/geometry.py`
-- MLX rotation helpers: `src/unilab/algos/mlx/common/rotation.py`
-- config schema: `src/unilab/structured_configs.py`
-- async runner: `src/unilab/ipc/async_runner.py`
-- sim2sim 跨后端契约: `src/unilab/training/sim2sim.py`
+## Current next milestone
 
-## GitHub CLI (gh) 速查
+The next incomplete milestone is M5.2: a deterministic fixed-episode evaluator comparing:
 
-### Issue 查看
-```bash
-gh issue view <number>
-gh api repos/<owner>/<repo>/issues/<number> --jq '.body'
+- zero policy;
+- random policy;
+- heuristic PointGoal controller;
+- PPO checkpoints.
+
+The evaluator must use the same initial-condition set for every controller and report episode-level metrics.
+
+## Non-negotiable engineering rules
+
+1. Read this file and the relevant skill before changing code.
+2. Inspect existing code, tests, registration, configuration, and import paths before editing.
+3. Keep one milestone per commit.
+4. Add or update tests with every behavior change.
+5. Run targeted tests first, then the full navigation suite.
+6. Do not commit `logs/`, checkpoints, TensorBoard event files, videos, caches, datasets, or temporary benchmark output.
+7. Do not modify vendored RSL-RL code when an adapter or wrapper can solve the problem.
+8. Preserve official/default PPO settings in formal task config. Hardware smoke-test overrides belong on the command line.
+9. Use deterministic seeds in tests and evaluation.
+10. Avoid hidden fallback behavior. Fail with actionable errors when configuration or checkpoints are invalid.
+11. Never use `nano`. For complete file creation use heredocs or a deterministic script; for edits use a small Python patch script or the repository editing tools.
+12. Do not combine unrelated refactors with a feature milestone.
+
+## Architecture boundaries
+
+Keep these responsibilities separate:
+
+```text
+task config
+  -> registry
+  -> environment contract
+  -> simulator backend
+  -> algorithm wrapper
+  -> training runner
+  -> independent evaluator
+  -> benchmark/report
 ```
 
-### PR 创建与管理
+Navigation task logic must not depend directly on a particular RL algorithm.
+
+SLAM implementations must not be embedded directly into reward functions. Expose estimator outputs through an observation/state-provider contract.
+
+## Standard validation
+
+Run from the repository root:
+
 ```bash
-gh pr create --title "标题" --body "内容" --base main
-gh pr list
-gh pr view
+uv run ruff check \
+  src/unilab/envs/navigation \
+  src/unilab/training \
+  tests/envs/navigation
 ```
 
-### PR Gate
-
-创建或更新 PR 前必须满足：
-
-1. 最终提交已经完成，且 `git status --short --branch` 确认工作树干净。
-2. 最终提交已经通过 `make test-all`。
-3. 如果用户明确说明已经跑过 `make test-all`，不要重复跑；但必须在 PR body 的 Validation 里记录 `make test-all` 已完成。
-4. 如果 `make test-all` 未通过且用户没有明确 override，不要创建或更新 PR。
-
-### CI 工作流查看
 ```bash
-gh run list
-gh run list --workflow=<workflow-name>
-gh run view <run-id>
-gh run list --status=failure
+uv run pytest tests/envs/navigation -q
 ```
 
-### 常用组合
+For a one-iteration PPO integration smoke test:
+
 ```bash
-gh api repos/unilabsim/UniLab/issues/174 --jq '.title, .body'
-git push -u origin fix/issue-174-mlx-ppo-config-alignment
-gh pr create --title "fix: xxx" --body "Fixes #174" --base main
+uv run python scripts/train_rsl_rl.py \
+  task=diff_drive_point_goal/mujoco \
+  algo.max_iterations=1 \
+  training.no_play=true
 ```
 
-## Context
+A one-iteration run only validates integration. It is not evidence that learning works.
 
-- 架构标准与验证详情：[docs/sphinx/source/zh_CN/4-developer_guide/0-index.md](docs/sphinx/source/zh_CN/4-developer_guide/0-index.md)
-- 协作流程与 PR 规范：[docs/sphinx/source/zh_CN/4-developer_guide/5-contributing_workflow.md](docs/sphinx/source/zh_CN/4-developer_guide/5-contributing_workflow.md)
-- 开发者入口（环境、命令、提交规范）：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 文档本地构建与发布到 UniLab-doc：[docs/sphinx/README.md#本地发布到-unilab-doc](docs/sphinx/README.md#本地发布到-unilab-doc)
+## Git workflow
+
+Before edits:
+
+```bash
+git status --short
+git branch --show-current
+git log -5 --oneline
+```
+
+Before commit:
+
+```bash
+git diff --check
+git status --short
+```
+
+After staging:
+
+```bash
+git diff --cached --check
+git diff --cached --name-status
+git diff --cached --stat
+```
+
+Use descriptive commits such as:
+
+```text
+feat(navigation): add fixed-episode policy evaluator
+feat(navigation): add obstacle and collision task
+feat(slam): add localization observation provider
+perf(benchmark): compare UniLab and standalone throughput
+```
+
+## Codex skills
+
+Invoke the project orchestrator for broad implementation work:
+
+```text
+$unilab-navigation-orchestrator
+```
+
+Use narrower skills when the task is specific:
+
+- `$unilab-navigation-task`
+- `$unilab-rl-adapter`
+- `$unilab-slam-adapter`
+- `$unilab-benchmark`
+- `$unilab-test-release`

@@ -1,0 +1,6 @@
+interface:
+  display_name: "UniLab SLAM Adapter"
+  short_description: "Connect localization, LiDAR, IMU, maps, and ROS2"
+  default_prompt: "Use $unilab-slam-adapter to add the requested SLAM or localization capability through a tested provider interface."
+policy:
+  allow_implicit_invocation: true
