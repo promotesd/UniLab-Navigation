@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M6.2 collision semantics
+- Earliest incomplete milestone after this update: M6.3 LiDAR observation
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -265,13 +265,43 @@ The heuristic has no obstacle observation and M6.1 intentionally has no
 collision termination yet. Its 11.7% timeout rate is therefore expected
 baseline behavior, not a collision metric or obstacle-avoidance claim.
 
-## Next milestone: M6.2 collision semantics
+## M6.2 collision semantics
+
+Status: complete.
+
+Delivered:
+
+- real robot/obstacle contact detection from a MuJoCo touch sensor attached to
+  the static obstacle;
+- mutually exclusive success, collision, and timeout outcomes with goal success
+  taking same-step precedence over collision and collision over timeout;
+- configurable contact-force threshold and collision reward penalty scoped to
+  `DiffDrivePointGoalObstacles`;
+- episode collision metrics emitted at the terminal transition before autoreset;
+- fixed-episode JSON and console collision-rate reporting;
+- collision-aware PPO sweep aggregation and trajectory summary counts;
+- analytical precedence tests plus real MuJoCo forced-contact and evaluator
+  integration tests.
+
+Bounded real MuJoCo heuristic evaluator smoke (`128` fixed episodes, seed `61`,
+autoreset disabled):
+
+```text
+success rate:   0.859375
+collision rate: 0.140625
+timeout rate:   0.0
+```
+
+The three terminal rates sum to one. The heuristic remains goal-directed and
+has no obstacle observation, so this run validates collision accounting rather
+than obstacle avoidance.
+
+## Next milestone: M6.3 LiDAR observation
 
 Required work:
 
-- detect robot/obstacle contacts from real MuJoCo state;
-- define collision termination separately from success and timeout;
-- emit per-episode collision rate before autoreset;
-- add configurable collision penalty without changing obstacle-free rewards;
-- test success, timeout, collision, and same-step precedence;
-- update fixed-episode evaluation and trajectory reports with collision metrics.
+- implement backend-independent fixed-beam range observations;
+- define angular range, clipping, normalization, validity, and deterministic
+  noise contracts;
+- add analytical geometry and real MuJoCo integration coverage;
+- keep the vectorized hot path free of per-environment Python loops.

@@ -2,12 +2,26 @@
     <include file="scene.xml"/>
 
     <worldbody>
-        <geom
-            name="static_obstacle"
-            type="box"
-            pos="2.0 0 0.50"
-            size="0.35 0.75 0.50"
-            rgba="0.80 0.25 0.12 1"
-        />
+        <body name="static_obstacle_body" pos="2.0 0 0.50">
+            <geom
+                name="static_obstacle"
+                type="box"
+                size="0.35 0.75 0.50"
+                rgba="0.80 0.25 0.12 1"
+            />
+            <site
+                name="static_obstacle_contact_site"
+                type="box"
+                size="0.36 0.76 0.51"
+                rgba="0 0 0 0"
+            />
+        </body>
     </worldbody>
+
+    <sensor>
+        <touch
+            name="static_obstacle_contact"
+            site="static_obstacle_contact_site"
+        />
+    </sensor>
 </mujoco>

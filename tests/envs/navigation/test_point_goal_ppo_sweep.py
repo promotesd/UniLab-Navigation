@@ -21,6 +21,7 @@ def result(seed: int, iteration: int, success: float) -> dict:
         "metrics": {
             "success_rate": success,
             "timeout_rate": 1.0 - success,
+            "collision_rate": 0.0,
             "initial_distance": distribution,
             "final_distance": distribution,
             "progress_ratio": distribution,

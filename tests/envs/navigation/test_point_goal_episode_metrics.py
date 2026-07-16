@@ -227,3 +227,18 @@ def test_rejects_mismatched_shapes() -> None:
             ),
             max_episode_steps=200,
         )
+
+
+def test_collision_completes_episode_and_goal_has_same_step_precedence() -> None:
+    log = build_point_goal_episode_log(
+        initial_distance=np.array([2.0, 2.0, 2.0]),
+        final_distance=np.array([1.0, 0.0, 1.0]),
+        reached_goal=np.array([False, True, False]),
+        collision=np.array([True, True, False]),
+        episode_steps=np.array([10, 10, 200]),
+        max_episode_steps=200,
+    )
+    assert log is not None
+    np.testing.assert_array_equal(log["Navigation/success_rate"], [0.0, 1.0, 0.0])
+    np.testing.assert_array_equal(log["Navigation/collision_rate"], [1.0, 0.0, 0.0])
+    np.testing.assert_array_equal(log["Navigation/timeout_rate"], [0.0, 0.0, 1.0])

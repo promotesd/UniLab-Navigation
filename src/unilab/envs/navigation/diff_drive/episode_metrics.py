@@ -12,6 +12,7 @@ def build_point_goal_episode_log(
     initial_distance: np.ndarray,
     final_distance: np.ndarray,
     reached_goal: np.ndarray,
+    collision: np.ndarray | None = None,
     episode_steps: np.ndarray,
     max_episode_steps: int,
 ) -> dict[str, np.ndarray] | None:
@@ -20,7 +21,8 @@ def build_point_goal_episode_log(
     An episode is completed when either:
 
     1. The robot reaches the goal.
-    2. The episode reaches its time limit.
+    2. The robot collides with an obstacle.
+    3. The episode reaches its time limit.
 
     Returns:
         A dictionary containing one value per completed episode.
@@ -31,6 +33,11 @@ def build_point_goal_episode_log(
     success_array = np.asarray(
         reached_goal,
         dtype=bool,
+    )
+    collision_array = (
+        np.zeros_like(success_array)
+        if collision is None
+        else np.asarray(collision, dtype=bool)
     )
     steps_array = np.asarray(episode_steps)
 
@@ -45,6 +52,7 @@ def build_point_goal_episode_log(
         "final_distance": final_array,
         "reached_goal": success_array,
         "episode_steps": steps_array,
+        "collision": collision_array,
     }
 
     for name, array in named_arrays.items():
@@ -61,11 +69,14 @@ def build_point_goal_episode_log(
 
     # A success on the final allowed step is still counted as success,
     # not as a timeout failure.
+    # Goal success takes precedence over collision on the same step. Collision
+    # then takes precedence over timeout at the episode limit.
+    collision_array = collision_array & ~success_array
     timed_out = (
         steps_array >= max_episode_steps
-    ) & ~success_array
+    ) & ~success_array & ~collision_array
 
-    completed = success_array | timed_out
+    completed = success_array | collision_array | timed_out
 
     if not np.any(completed):
         return None
@@ -88,6 +99,8 @@ def build_point_goal_episode_log(
         completed
     ].astype(dtype)
 
+    completed_collision = collision_array[completed].astype(dtype)
+
     completed_steps = steps_array[
         completed
     ].astype(dtype)
@@ -104,6 +117,7 @@ def build_point_goal_episode_log(
     return {
         "Navigation/success_rate": completed_success,
         "Navigation/timeout_rate": completed_timeout,
+        "Navigation/collision_rate": completed_collision,
         "Navigation/initial_distance": completed_initial,
         "Navigation/final_distance": completed_final,
         "Navigation/progress_ratio": progress_ratio,

@@ -43,9 +43,13 @@ def analyze_point_goal_trajectories(report: Mapping[str, Any]) -> dict[str, Any]
         if any("trajectory" not in episode for episode in episodes):
             raise ValueError(f"policy {policy_name!r} report does not contain trajectories")
         success_count = sum(bool(episode["success"]) for episode in episodes)
+        collision_count = sum(bool(episode.get("collision", False)) for episode in episodes)
+        timeout_count = sum(bool(episode["timeout"]) for episode in episodes)
         summaries[policy_name] = {
             "episode_count": len(episodes),
             "success_count": success_count,
+            "collision_count": collision_count,
+            "timeout_count": timeout_count,
             "failure_count": len(episodes) - success_count,
             "path_length": result["metrics"]["path_length"],
             "spl": result["metrics"]["spl"],

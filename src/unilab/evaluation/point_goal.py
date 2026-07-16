@@ -186,6 +186,7 @@ def evaluate_point_goal_policy(
     episode_length = np.zeros(manifest.episode_count, dtype=np.int64)
     success = np.zeros(manifest.episode_count, dtype=bool)
     timeout = np.zeros(manifest.episode_count, dtype=bool)
+    collision = np.zeros(manifest.episode_count, dtype=bool)
     active = np.ones(manifest.episode_count, dtype=bool)
     previous_positions = manifest.robot_states[:, :2].astype(np.float64, copy=True)
     path_length = np.zeros(manifest.episode_count, dtype=np.float64)
@@ -229,8 +230,16 @@ def evaluate_point_goal_policy(
         if np.any(done_now):
             final_distance[done_now] = np.asarray(state.info["distance_to_goal"])[done_now]
             episode_length[done_now] = np.asarray(state.info["steps"])[done_now]
-            success[done_now] = state.terminated[done_now]
-            timeout[done_now] = state.truncated[done_now] & ~state.terminated[done_now]
+            step_collision = np.asarray(
+                state.info.get("collision", np.zeros(manifest.episode_count, dtype=bool))
+            )
+            collision[done_now] = step_collision[done_now] & ~state.info["goal_reached"][done_now]
+            success[done_now] = state.info["goal_reached"][done_now]
+            timeout[done_now] = (
+                state.truncated[done_now]
+                & ~success[done_now]
+                & ~collision[done_now]
+            )
             active[done_now] = False
         if not np.any(active):
             break
@@ -251,6 +260,7 @@ def evaluate_point_goal_policy(
             "episode_id": episode_id,
             "success": bool(success[episode_id]),
             "timeout": bool(timeout[episode_id]),
+            "collision": bool(collision[episode_id]),
             "initial_distance": float(initial_distance[episode_id]),
             "final_distance": float(final_distance[episode_id]),
             "progress_ratio": float(progress_ratio[episode_id]),
@@ -269,6 +279,7 @@ def evaluate_point_goal_policy(
         "episode_count": manifest.episode_count,
         "success_rate": float(np.mean(success)),
         "timeout_rate": float(np.mean(timeout)),
+        "collision_rate": float(np.mean(collision)),
         "initial_distance": _distribution(initial_distance),
         "final_distance": _distribution(final_distance),
         "progress_ratio": _distribution(progress_ratio),
@@ -318,7 +329,7 @@ def evaluate_point_goal_policies(
 def format_point_goal_summary(report: Mapping[str, Any]) -> str:
     """Format the aggregate metrics as a human-readable console table."""
     header = (
-        "policy     episodes success timeout initial_dist final_dist progress "
+        "policy     episodes success collision timeout initial_dist final_dist progress "
         "ep_len path_len spl success_len"
     )
     rows = [header]
@@ -334,7 +345,8 @@ def format_point_goal_summary(report: Mapping[str, Any]) -> str:
 
         rows.append(
             f"{name:<10} {metrics['episode_count']:>8d} "
-            f"{metrics['success_rate']:>7.3f} {metrics['timeout_rate']:>7.3f} "
+            f"{metrics['success_rate']:>7.3f} {metrics['collision_rate']:>9.3f} "
+            f"{metrics['timeout_rate']:>7.3f} "
             f"{mean_std('initial_distance'):>12} {mean_std('final_distance'):>12} "
             f"{mean_std('progress_ratio'):>12} {mean_std('episode_length'):>12} "
             f"{mean_std('path_length'):>12} {mean_std('spl'):>12} "

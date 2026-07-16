@@ -57,6 +57,8 @@ def test_analysis_uses_declared_non_cherry_picked_selection_rules() -> None:
     analysis = analyze_point_goal_trajectories(trajectory_report())
     assert "lower medians" in analysis["selection_policy"]
     assert analysis["policies"]["zero"]["failure_count"] == 2
+    assert analysis["policies"]["zero"]["collision_count"] == 0
+    assert analysis["policies"]["zero"]["timeout_count"] == 2
     assert analysis["policies"]["heuristic"]["success_count"] == 2
     representatives = {
         (entry["policy"], entry["outcome"]): entry for entry in analysis["representatives"]

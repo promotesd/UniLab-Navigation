@@ -64,6 +64,8 @@ class DiffDrivePointGoalObstaclesCfg(DiffDrivePointGoalCfg):
     obstacle_half_extents: tuple[tuple[float, float], ...] = ((0.35, 0.75),)
     obstacle_clearance: float = 0.35
     goal_sample_max_attempts: int = 128
+    collision_force_threshold: float = 1.0e-6
+    collision_penalty: float = 5.0
 
     def validate(self) -> None:
         super().validate()
@@ -76,11 +78,17 @@ class DiffDrivePointGoalObstaclesCfg(DiffDrivePointGoalCfg):
             raise ValueError("the fixed robot start overlaps the configured obstacle clearance")
         if self.goal_sample_max_attempts <= 0:
             raise ValueError("goal_sample_max_attempts must be positive")
+        if self.collision_force_threshold < 0.0:
+            raise ValueError("collision_force_threshold must be non-negative")
+        if self.collision_penalty < 0.0:
+            raise ValueError("collision_penalty must be non-negative")
 
 
 @registry.env("DiffDrivePointGoalObstacles", sim_backend="mujoco")
 class DiffDrivePointGoalObstaclesMujocoEnv(DiffDrivePointGoalMujocoEnv):
     """Real MuJoCo PointGoal task with a fixed static obstacle layout."""
+
+    COLLISION_SENSOR_NAME = "static_obstacle_contact"
 
     def __init__(
         self,
@@ -142,6 +150,19 @@ class DiffDrivePointGoalObstaclesMujocoEnv(DiffDrivePointGoalMujocoEnv):
             "obstacle_centers": centers.copy(),
             "obstacle_half_extents": half_extents.copy(),
         }
+
+    def _compute_collision_mask(self) -> np.ndarray:
+        cfg = self.cfg
+        assert isinstance(cfg, DiffDrivePointGoalObstaclesCfg)
+        contact_force = np.asarray(
+            self._backend.get_sensor_data(self.COLLISION_SENSOR_NAME)
+        ).reshape(self.num_envs, -1)
+        return np.any(contact_force > cfg.collision_force_threshold, axis=1)
+
+    def _collision_penalty(self, collision: np.ndarray) -> np.ndarray:
+        cfg = self.cfg
+        assert isinstance(cfg, DiffDrivePointGoalObstaclesCfg)
+        return collision.astype(get_global_dtype()) * cfg.collision_penalty
 
     def _validate_initial_conditions(
         self,

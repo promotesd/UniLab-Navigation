@@ -118,6 +118,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             current_distance,
             self._cfg.goal_tolerance,
         )
+        collision = self._compute_collision_mask() & ~reached_goal
 
         reward = compute_point_goal_reward(
             previous_distance=old_distance,
@@ -127,6 +128,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             success_bonus=self._cfg.reward_config.success_bonus,
             time_penalty=self._cfg.reward_config.time_penalty,
         )
+        reward -= self._collision_penalty(collision)
 
         self.previous_distance[:] = current_distance
 
@@ -136,10 +138,12 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
             state=state,
             current_distance=current_distance,
             reached_goal=reached_goal,
+            collision=collision,
         )
 
         state.info["distance_to_goal"] = current_distance.copy()
         state.info["goal_reached"] = reached_goal.copy()
+        state.info["collision"] = collision.copy()
         state.info["robot_state"] = self.robot_states.copy()
         state.info["goal_position"] = self.goals.copy()
         state.info["wheel_commands"] = self.wheel_commands.copy()
@@ -151,7 +155,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
                 "critic": observation.copy(),
             },
             reward=reward,
-            terminated=reached_goal,
+            terminated=reached_goal | collision,
             truncated=state.truncated,
         )
 
@@ -236,6 +240,7 @@ class DiffDrivePointGoalMujocoEnv(DiffDrivePointGoalEnv):
                 count,
                 dtype=bool,
             ),
+            "collision": np.zeros(count, dtype=bool),
             "robot_state": self.robot_states[
                 indices
             ].copy(),

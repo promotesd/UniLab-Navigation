@@ -126,6 +126,7 @@ def test_all_policy_factories_share_one_manifest_and_emit_requested_metrics() ->
         "episode_count",
         "success_rate",
         "timeout_rate",
+        "collision_rate",
         "initial_distance",
         "final_distance",
         "progress_ratio",

@@ -96,7 +96,7 @@ def aggregate_ppo_checkpoint_results(
                 f"iteration {iteration} has seeds {actual_seeds}; expected {expected}"
             )
         aggregated_metrics: dict[str, Any] = {}
-        for metric_name in ("success_rate", "timeout_rate"):
+        for metric_name in ("success_rate", "collision_rate", "timeout_rate"):
             aggregated_metrics[metric_name] = _summary(
                 [float(result["metrics"][metric_name]) for result in iteration_results]
             )

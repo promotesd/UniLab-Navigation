@@ -172,6 +172,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             current_distance,
             self._cfg.goal_tolerance,
         )
+        collision = self._compute_collision_mask() & ~reached_goal
 
         reward = compute_point_goal_reward(
             previous_distance=old_distance,
@@ -181,6 +182,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             success_bonus=self._cfg.reward_config.success_bonus,
             time_penalty=self._cfg.reward_config.time_penalty,
         )
+        reward -= self._collision_penalty(collision)
 
         self.previous_distance[:] = current_distance
 
@@ -190,10 +192,12 @@ class DiffDrivePointGoalEnv(NpEnv):
             state=state,
             current_distance=current_distance,
             reached_goal=reached_goal,
+            collision=collision,
         )
 
         state.info["distance_to_goal"] = current_distance.copy()
         state.info["goal_reached"] = reached_goal.copy()
+        state.info["collision"] = collision.copy()
         state.info["robot_state"] = self.robot_states.copy()
         state.info["goal_position"] = self.goals.copy()
         state.info.update(self._build_task_info())
@@ -204,7 +208,7 @@ class DiffDrivePointGoalEnv(NpEnv):
                 "critic": observation.copy(),
             },
             reward=reward,
-            terminated=reached_goal,
+            terminated=reached_goal | collision,
             truncated=state.truncated,
         )
 
@@ -258,6 +262,7 @@ class DiffDrivePointGoalEnv(NpEnv):
         info = {
             "distance_to_goal": distance.copy(),
             "goal_reached": np.zeros(count, dtype=bool),
+            "collision": np.zeros(count, dtype=bool),
             "robot_state": self.robot_states[indices].copy(),
             "goal_position": self.goals[indices].copy(),
             **self._build_task_info(indices),
@@ -318,6 +323,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             "steps": np.zeros(self.num_envs, dtype=np.uint32),
             "distance_to_goal": distances.copy(),
             "goal_reached": np.zeros(self.num_envs, dtype=bool),
+            "collision": np.zeros(self.num_envs, dtype=bool),
             "robot_state": self.robot_states.copy(),
             "goal_position": self.goals.copy(),
             **self._build_task_info(),
@@ -366,12 +372,22 @@ class DiffDrivePointGoalEnv(NpEnv):
         del env_indices
         return {}
 
+    def _compute_collision_mask(self) -> np.ndarray:
+        """Return task collision terminals; obstacle-free tasks have none."""
+        return np.zeros(self.num_envs, dtype=bool)
+
+    def _collision_penalty(self, collision: np.ndarray) -> np.ndarray:
+        """Return a per-environment collision reward penalty."""
+        del collision
+        return np.zeros(self.num_envs, dtype=get_global_dtype())
+
     def _update_episode_log(
         self,
         *,
         state: NpEnvState,
         current_distance: np.ndarray,
         reached_goal: np.ndarray,
+        collision: np.ndarray | None = None,
     ) -> None:
         """Publish metrics for episodes completed on this step."""
         max_episode_steps = self._cfg.max_episode_steps
@@ -390,6 +406,7 @@ class DiffDrivePointGoalEnv(NpEnv):
             initial_distance=self.initial_distance,
             final_distance=current_distance,
             reached_goal=reached_goal,
+            collision=collision,
             episode_steps=episode_steps,
             max_episode_steps=int(max_episode_steps),
         )
