@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M11 reproducibility
+- Earliest incomplete milestone after this update: none; M5.1 through M11 are complete
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -921,17 +921,72 @@ report SHA-256: d6c468acef47319b3e6cf159bcb1153199a794571ce679a656b0383d2723012f
 
 All raw benchmark output remains under `/tmp` and is not committed.
 
-## Next milestone: M11 reproducibility
+## M11 reproducibility release
 
-Required work:
+Status: complete.
 
-- provide environment lock/setup instructions and one-command smoke, training,
-  evaluation, fair-algorithm, and framework-benchmark workflows;
-- capture Git, model/config, software, hardware, seeds, precision, device,
-  manifests, checkpoints, raw outputs, and hashes consistently;
-- add a reproducibility audit that rejects missing provenance and generated
-  artifacts inside the repository;
-- document expected runtime/resource bounds and separate quick CI from formal
-  experiments;
-- run the clean-checkout-equivalent command sequence and close the roadmap only
-  when every milestone has source, tests, bounded evidence, commit, and push.
+Delivered:
+
+- dependency state locked by tracked `uv.lock`;
+- versioned `conf/navigation/reproducibility.json` with quick/formal budgets,
+  training/evaluation/benchmark seeds, and subsystem seeds;
+- one CLI with `quick`, `train`, `evaluate`, `benchmark`, and `audit`
+  subcommands, defaulting all generated output to `/tmp`;
+- one-command reference PPO/SAC/TD3 training profiles and fixed-episode
+  baseline evaluation;
+- one-command quick/formal framework-versus-standalone benchmark matrices;
+- schema-versioned provenance containing invocation, command timings, Git
+  commit/branch/status, `uv.lock` hash, software/hardware, seeds, config, and
+  SHA-256 for every declared input/output;
+- strict nested JSON plus a one-row CSV index with JSON-encoded seed/config/hash
+  columns;
+- release audit for required files, lock hash, required ignore rules, and
+  forbidden tracked logs/runs/W&B/checkpoints/TensorBoard events/run summaries;
+- expanded ignore rules for W&B, checkpoint directories, TensorBoard events,
+  and `.ckpt` files;
+- reproducibility guide with frozen setup, exact commands, result schema,
+  quick/formal separation, expected resource bounds, and honest failure/seed
+  retention policy;
+- focused tests for seed schema, provenance validation, JSON/CSV round trip,
+  artifact detection, actual repository audit, and command construction.
+
+Actual one-command quick workflow:
+
+- Ruff: clean;
+- complete navigation suite: `181 passed`;
+- fixed episodes: `32`, manifest seed `1101`;
+- zero/random/heuristic success: `0.0 / 0.0 / 1.0`;
+- quick benchmark: `32` environments, `8` steps, seeds `101/202/303`, two
+  measured repetitions per seed after warmup;
+- repository audit: passed, `1,157` tracked files, zero tracked generated
+  artifacts;
+- `uv.lock` SHA-256:
+  `2e8f266c38ab35c6ff43a2097e915c124d5ec22f5f1506bbfd3758701a2aff9c`;
+- JSON and CSV provenance both validated.
+
+Validation and evidence:
+
+```text
+focused M11 tests: 6 passed
+quick evaluation: /tmp/unilab_m11_repro/quick/evaluation.json
+quick evaluation SHA-256: 54d1b3661676885cce205b7d0e0448922c312a886896319fde18176b11bbc0f9
+quick benchmark: /tmp/unilab_m11_repro/quick/benchmark.json
+quick benchmark SHA-256: 9327e36bb410eb92028fbd7f3659a78932b5d94460f06d5c8a591a8ce85ced88
+audit: /tmp/unilab_m11_repro/quick/audit.json
+audit SHA-256: c7fe4bbb10616866fe1293be22e58d35c56be9534d0891a7eafde3f0ba789ea8
+provenance JSON SHA-256: 225d53162c64098a22f4a19de5103ad92897632d1a8abeb56d1a7ca4c58857f4
+provenance CSV SHA-256: e42d3703e234543b30928465761e1ec9dc4d829671f62f50f75dc885727eab48
+```
+
+The recorded provenance correctly marks the development checkout dirty because
+it was generated before the M11 commit and because a pre-existing user-owned
+skill edit remains outside milestone scope. A final clean-worktree-equivalent
+quick run is performed after the M11 commit. All workflow output remains under
+`/tmp` and is not committed.
+
+## Roadmap status
+
+M5.1 through M11 are implemented, validated with bounded real MuJoCo evidence,
+committed milestone by milestone, and pushed on `feat/navigation-mvp`. Future
+work should begin from a new roadmap rather than silently extending these
+acceptance criteria.
