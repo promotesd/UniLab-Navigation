@@ -15,6 +15,8 @@ from unilab.envs.navigation.diff_drive import (
 from unilab.evaluation.point_goal import (
     PointGoalManifest,
     evaluate_point_goal_policies,
+    read_point_goal_manifest,
+    write_point_goal_manifest,
 )
 from unilab.training.rsl_rl import RslRlVecEnvWrapper, normalize_ppo_train_cfg
 
@@ -64,6 +66,23 @@ def test_real_mujoco_fixed_evaluator_compares_same_episodes() -> None:
     assert report["policies"]["zero"]["manifest_sha256"] == report["policies"][
         "heuristic"
     ]["manifest_sha256"]
+
+
+def test_real_mujoco_reuses_manifest_loaded_from_disk(tmp_path) -> None:
+    manifest = PointGoalManifest(
+        seed=14,
+        robot_states=np.array([[0.0, 0.0, 0.0], [0.0, 0.0, np.pi / 2]], dtype=np.float32),
+        goals=np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+    )
+    loaded = read_point_goal_manifest(
+        write_point_goal_manifest(manifest, tmp_path / "manifest.json")
+    )
+    report = evaluate_point_goal_policies(
+        make_env,
+        {"zero": lambda env: ZeroPointGoalPolicy()},
+        loaded,
+    )
+    assert report["manifest"]["sha256"] == manifest.to_dict()["sha256"]
 
 
 def test_real_mujoco_ppo_checkpoint_factory_produces_deterministic_actions(tmp_path) -> None:

@@ -7,6 +7,8 @@ from .point_goal import (
     evaluate_point_goal_policy,
     format_point_goal_summary,
     generate_point_goal_manifest,
+    read_point_goal_manifest,
+    write_point_goal_manifest,
     write_point_goal_report,
 )
 
@@ -17,5 +19,7 @@ __all__ = [
     "evaluate_point_goal_policy",
     "format_point_goal_summary",
     "generate_point_goal_manifest",
+    "read_point_goal_manifest",
+    "write_point_goal_manifest",
     "write_point_goal_report",
 ]

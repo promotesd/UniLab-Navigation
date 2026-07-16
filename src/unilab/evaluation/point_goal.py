@@ -93,6 +93,12 @@ class PointGoalManifest:
         conditions = payload.get("initial_conditions")
         if not isinstance(conditions, list):
             raise ValueError("manifest initial_conditions must be a list")
+        declared_count = payload.get("episode_count")
+        if declared_count is not None and int(declared_count) != len(conditions):
+            raise ValueError("manifest episode_count does not match initial_conditions")
+        episode_ids = [condition.get("episode_id") for condition in conditions]
+        if episode_ids != list(range(len(conditions))):
+            raise ValueError("manifest episode_id values must be contiguous and zero-based")
         states = [condition["robot_state"] for condition in conditions]
         goals = [condition["goal_position"] for condition in conditions]
         manifest = cls(seed=int(payload["seed"]), robot_states=states, goals=goals)
@@ -289,3 +295,28 @@ def write_point_goal_report(report: Mapping[str, Any], output_path: str | Path) 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n")
     return path
+
+
+def read_point_goal_manifest(input_path: str | Path) -> PointGoalManifest:
+    """Read a standalone manifest or the embedded manifest from an evaluation report."""
+    path = Path(input_path)
+    try:
+        payload = json.loads(path.read_text())
+    except FileNotFoundError:
+        raise FileNotFoundError(f"PointGoal manifest does not exist: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"PointGoal manifest is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("PointGoal manifest JSON must contain an object")
+    manifest_payload = payload.get("manifest", payload)
+    if not isinstance(manifest_payload, dict):
+        raise ValueError("evaluation report manifest must contain an object")
+    return PointGoalManifest.from_dict(manifest_payload)
+
+
+def write_point_goal_manifest(
+    manifest: PointGoalManifest,
+    output_path: str | Path,
+) -> Path:
+    """Write a reusable strict JSON initial-condition manifest."""
+    return write_point_goal_report(manifest.to_dict(), output_path)

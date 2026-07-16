@@ -1,5 +1,6 @@
 """Unit tests for deterministic fixed-episode PointGoal evaluation."""
 
+import json
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -18,6 +19,8 @@ from unilab.evaluation.point_goal import (
     evaluate_point_goal_policy,
     format_point_goal_summary,
     generate_point_goal_manifest,
+    read_point_goal_manifest,
+    write_point_goal_manifest,
     write_point_goal_report,
 )
 
@@ -48,6 +51,33 @@ def test_manifest_is_deterministic_serializable_and_tamper_evident() -> None:
     tampered["initial_conditions"][0]["goal_position"][0] += 0.5
     with pytest.raises(ValueError, match="sha256"):
         PointGoalManifest.from_dict(tampered)
+
+
+def test_manifest_round_trip_supports_standalone_and_embedded_report(tmp_path) -> None:
+    manifest = generate_point_goal_manifest(
+        episode_count=4, seed=9, min_goal_distance=1.0, max_goal_distance=2.0
+    )
+    standalone = write_point_goal_manifest(manifest, tmp_path / "manifest.json")
+    assert read_point_goal_manifest(standalone).to_dict() == manifest.to_dict()
+
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({"manifest": manifest.to_dict()}))
+    assert read_point_goal_manifest(report).to_dict() == manifest.to_dict()
+
+
+def test_manifest_rejects_mismatched_count_and_episode_ids() -> None:
+    payload = generate_point_goal_manifest(
+        episode_count=2, seed=2, min_goal_distance=1.0, max_goal_distance=2.0
+    ).to_dict()
+    payload.pop("sha256")
+    payload["episode_count"] = 3
+    with pytest.raises(ValueError, match="episode_count"):
+        PointGoalManifest.from_dict(payload)
+
+    payload["episode_count"] = 2
+    payload["initial_conditions"][1]["episode_id"] = 4
+    with pytest.raises(ValueError, match="episode_id"):
+        PointGoalManifest.from_dict(payload)
 
 
 def test_explicit_reset_installs_exact_conditions_and_clears_episode_state() -> None:
