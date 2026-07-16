@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M8.3 recorded-estimate replay
+- Earliest incomplete milestone after this update: M8.4 online estimator plugin
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -637,14 +637,81 @@ comparison SHA-256: a3ffe8137cdd4c7992534fc58c0661ca48fbe8badf4317883d46ab7cc929
 All logs, checkpoints, TensorBoard events, manifests, evaluation reports, and
 aggregate JSON remain under `/tmp` and are not committed.
 
-## Next milestone: M8.3 recorded-estimate replay
+## M8.3 recorded-estimate replay
+
+Status: complete.
+
+Delivered:
+
+- strict versioned JSON records with one increasing timestamp axis and batched
+  planar pose, covariance, status, parent frame, child frame, conventions, and
+  units;
+- required content SHA-256 with tamper detection;
+- deterministic timestamp lookup per environment rather than array-index
+  matching, including independent clocks after partial resets;
+- `linear` interpolation for x/y/covariance and shortest-path yaw, plus
+  `previous` sample-and-hold;
+- explicit `error`, `clamp`, and `lost` out-of-range behavior;
+- missing/invalid endpoints mapped to `LOST`, optional maximum sample age, and
+  monotonic query enforcement;
+- a one-nanosecond numerical boundary tolerance so accumulated simulation time
+  snaps to a recorded endpoint without masking genuinely out-of-range queries;
+- explicit identity-only frame-transform policy with config/record frame
+  agreement and no silent reinterpretation;
+- registry/Hydra construction from a nested `recorded_pose.path` config;
+- fixed-episode evaluator support for recorded streams, including stream hash,
+  interpolation, range, staleness, and frame provenance in JSON;
+- replay estimates feeding observations while reward, success, collision,
+  timeout, and true distance continue using MuJoCo task truth.
+
+Analytical and integration coverage includes serialization/tamper detection,
+duplicate timestamps, interpolation across the yaw wrap, covariance and status,
+missing/stale/range behavior, floating-point endpoint snapping, partial reset
+clocks, required config, nested registry loading, and real MuJoCo truth
+separation.
+
+Bounded real MuJoCo sensitivity run:
+
+- episodes: `128` on one manifest, seed `8301`, internal manifest SHA-256
+  `9ae7429017c198c13c8a9951e86da9fd27a03c60bbb82fd8fd4becff16625b6a`;
+- ground-truth heuristic: success `1.0000`, timeout `0.0000`, SPL `0.973`;
+- static recorded-estimate heuristic: success `0.0547`, timeout `0.9453`,
+  SPL `0.055`;
+- recorded stream status: `DEGRADED`, covariance diagonal
+  `[0.01, 0.01, 0.0025]`, samples every `0.1 s` through `20.0 s`;
+- autoreset disabled for both evaluations.
+
+The static recording is deliberately inconsistent with the moving robot. Its
+degradation is retained as evidence of the provider boundary, not presented as
+an estimator-quality result.
+
+Evidence:
+
+```text
+Ruff: clean
+focused localization tests: 19 passed
+targeted localization/evaluator/registry tests: 39 passed
+complete navigation suite: 153 passed
+manifest: /tmp/unilab_m83_manifest.json
+manifest file SHA-256: 39de6d8076a34888023b8a22001040e92153311214139f42e092d5b2012eeacb
+recording: /tmp/unilab_m83_static_recording.json
+recording internal SHA-256: fa9b816d3e05bd86694d54d1f6781ad44a38b622416f246a700cae0e6158c3f8
+recording file SHA-256: 032ebe0af237fb009b4845fdbe9489adc170bb0ea08a38c0d28cabacbe45d1f3
+ground-truth report SHA-256: f3934b8a50087193425a48874685f78109210686b5197ab0ef099f77e91060e8
+recorded report SHA-256: a37d727cb5a465a9e1769935dd21d837a6dc9b5b1de96721fe8b2805d4ac8bb8
+```
+
+All generated recordings, manifests, and reports remain under `/tmp` and are
+not committed.
+
+## Next milestone: M8.4 online estimator plugin
 
 Required work:
 
-- define an offline timestamped localization-record schema with pose,
-  covariance, validity/status, and explicit parent/child frames;
-- replay recorded estimates deterministically against navigation sensor time;
-- define missing, duplicate, non-monotonic, and out-of-range timestamp behavior;
-- preserve task truth separation and fixed observation shape;
-- add analytical, serialization, registry/config, and real MuJoCo integration
-  tests.
+- define lifecycle and state ownership for a dependency-free online estimator
+  plugin boundary;
+- consume typed sensor packets without importing a concrete SLAM package;
+- define update cadence, latency, dropout, reset, covariance, status, and frame
+  behavior;
+- add an analytical reference plugin and real MuJoCo integration tests;
+- keep ROS2 imports outside the core environment package.

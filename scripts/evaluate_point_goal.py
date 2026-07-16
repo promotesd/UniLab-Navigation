@@ -21,6 +21,7 @@ from unilab.envs.navigation.diff_drive import (
     RandomPointGoalPolicy,
     ZeroPointGoalPolicy,
 )
+from unilab.envs.navigation.localization import read_recorded_pose_stream
 from unilab.evaluation.point_goal import (
     evaluate_point_goal_policies,
     format_point_goal_summary,
@@ -61,6 +62,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--td3-checkpoint", type=Path)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-episode-seconds", type=float)
+    parser.add_argument(
+        "--recorded-pose-stream",
+        type=Path,
+        help="Drive localization observations from one recorded-pose JSON stream.",
+    )
+    parser.add_argument(
+        "--recorded-interpolation",
+        choices=("linear", "previous"),
+        default="linear",
+    )
+    parser.add_argument(
+        "--recorded-out-of-range",
+        choices=("error", "clamp", "lost"),
+        default="error",
+    )
+    parser.add_argument("--recorded-max-sample-age", type=float)
     parser.add_argument(
         "--record-trajectories",
         action="store_true",
@@ -157,6 +174,28 @@ def main() -> None:
         if args.max_episode_seconds <= 0.0:
             raise ValueError("--max-episode-seconds must be positive")
         env_cfg_override["max_episode_seconds"] = args.max_episode_seconds
+    recorded_stream = None
+    if args.recorded_pose_stream is not None:
+        if args.recorded_max_sample_age is not None and args.recorded_max_sample_age < 0.0:
+            raise ValueError("--recorded-max-sample-age must be non-negative")
+        recorded_path = args.recorded_pose_stream.resolve()
+        recorded_stream = read_recorded_pose_stream(recorded_path)
+        if recorded_stream.environment_count != episode_count:
+            raise ValueError(
+                "recorded-pose environment count does not match evaluation episodes"
+            )
+        env_cfg_override["localization"] = {
+            "provider": "recorded_pose",
+            "parent_frame": recorded_stream.parent_frame,
+            "child_frame": recorded_stream.child_frame,
+            "recorded_pose": {
+                "path": str(recorded_path),
+                "interpolation": args.recorded_interpolation,
+                "out_of_range": args.recorded_out_of_range,
+                "max_sample_age_s": args.recorded_max_sample_age,
+                "frame_transform": "identity",
+            },
+        }
 
     def env_factory():
         return create_env(
@@ -183,6 +222,21 @@ def main() -> None:
             "max_episode_steps": int(probe_env.cfg.max_episode_steps),
             "ctrl_dt": float(probe_env.cfg.ctrl_dt),
             "goal_tolerance": float(probe_env.cfg.goal_tolerance),
+            "localization": (
+                {
+                    "provider": "recorded_pose",
+                    "stream": str(args.recorded_pose_stream.resolve()),
+                    "stream_sha256": recorded_stream.to_dict()["sha256"],
+                    "interpolation": args.recorded_interpolation,
+                    "out_of_range": args.recorded_out_of_range,
+                    "max_sample_age_s": args.recorded_max_sample_age,
+                    "frame_transform": "identity",
+                    "parent_frame": recorded_stream.parent_frame,
+                    "child_frame": recorded_stream.child_frame,
+                }
+                if recorded_stream is not None
+                else {"provider": "ground_truth"}
+            ),
         }
     finally:
         probe_env.close()

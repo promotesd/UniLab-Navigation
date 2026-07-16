@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Protocol
+from pathlib import Path
+from typing import Any, Mapping, Protocol
 
 import numpy as np
 
@@ -509,6 +512,314 @@ class DeadReckoningPoseProvider:
         )
 
 
+def _recorded_stream_sha256(payload: Mapping[str, Any]) -> str:
+    unhashed = {key: value for key, value in payload.items() if key != "sha256"}
+    encoded = json.dumps(unhashed, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
+class RecordedPoseStream:
+    """Serializable batched planar pose estimates on one strict timestamp axis."""
+
+    timestamps_s: np.ndarray
+    pose: np.ndarray
+    covariance: np.ndarray
+    status: np.ndarray
+    parent_frame: str = "map"
+    child_frame: str = "base_link"
+
+    def __post_init__(self) -> None:
+        timestamps = np.asarray(self.timestamps_s, dtype=np.float64)
+        pose = np.asarray(self.pose, dtype=get_global_dtype())
+        covariance = np.asarray(self.covariance, dtype=get_global_dtype())
+        status = np.asarray(self.status, dtype=np.uint8)
+        if timestamps.ndim != 1 or len(timestamps) == 0:
+            raise ValueError("recorded timestamps must be a non-empty vector")
+        if not np.all(np.isfinite(timestamps)) or np.any(timestamps < 0.0):
+            raise ValueError("recorded timestamps must be finite and non-negative")
+        if np.any(np.diff(timestamps) <= 0.0):
+            raise ValueError("recorded timestamps must be strictly increasing")
+        if pose.ndim != 3 or pose.shape[0] != len(timestamps) or pose.shape[2] != 3:
+            raise ValueError("recorded pose must have shape (samples, environments, 3)")
+        sample_count, environment_count, _ = pose.shape
+        if covariance.shape != (sample_count, environment_count, 3, 3):
+            raise ValueError(
+                "recorded covariance must have shape (samples, environments, 3, 3)"
+            )
+        if status.shape != (sample_count, environment_count):
+            raise ValueError("recorded status must have shape (samples, environments)")
+        _validate_frame_pair(self.parent_frame, self.child_frame)
+        PoseEstimate(
+            pose=pose.reshape(-1, 3),
+            covariance=covariance.reshape(-1, 3, 3),
+            valid=np.isin(
+                status.reshape(-1),
+                np.array([PoseStatus.TRACKING, PoseStatus.DEGRADED], dtype=np.uint8),
+            ),
+            status=status.reshape(-1),
+            timestamp_s=np.repeat(timestamps, environment_count),
+            parent_frame=self.parent_frame,
+            child_frame=self.child_frame,
+        )
+        object.__setattr__(self, "timestamps_s", timestamps.copy())
+        object.__setattr__(self, "pose", pose.copy())
+        object.__setattr__(self, "covariance", covariance.copy())
+        object.__setattr__(self, "status", status.copy())
+
+    @property
+    def environment_count(self) -> int:
+        return self.pose.shape[1]
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "schema_version": 1,
+            "pose_convention": "x_y_yaw_radians",
+            "linear_units": "meters",
+            "angular_units": "radians",
+            "parent_frame": self.parent_frame,
+            "child_frame": self.child_frame,
+            "timestamps_s": self.timestamps_s.tolist(),
+            "pose": self.pose.tolist(),
+            "covariance": self.covariance.tolist(),
+            "status": self.status.tolist(),
+        }
+        payload["sha256"] = _recorded_stream_sha256(payload)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> RecordedPoseStream:
+        if int(payload.get("schema_version", -1)) != 1:
+            raise ValueError("recorded-pose schema_version must be 1")
+        if payload.get("pose_convention") != "x_y_yaw_radians":
+            raise ValueError("recorded-pose convention must be x_y_yaw_radians")
+        if payload.get("linear_units") != "meters":
+            raise ValueError("recorded-pose linear units must be meters")
+        if payload.get("angular_units") != "radians":
+            raise ValueError("recorded-pose angular units must be radians")
+        expected_hash = payload.get("sha256")
+        if not isinstance(expected_hash, str):
+            raise ValueError("recorded-pose stream requires a sha256 content hash")
+        if expected_hash != _recorded_stream_sha256(payload):
+            raise ValueError("recorded-pose sha256 does not match its content")
+        return cls(
+            timestamps_s=payload["timestamps_s"],
+            pose=payload["pose"],
+            covariance=payload["covariance"],
+            status=payload["status"],
+            parent_frame=str(payload["parent_frame"]),
+            child_frame=str(payload["child_frame"]),
+        )
+
+
+def write_recorded_pose_stream(
+    stream: RecordedPoseStream,
+    output_path: str | Path,
+) -> Path:
+    """Write one strict recorded-pose JSON stream."""
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(stream.to_dict(), indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def read_recorded_pose_stream(input_path: str | Path) -> RecordedPoseStream:
+    """Read and validate one recorded-pose JSON stream."""
+    path = Path(input_path)
+    try:
+        payload = json.loads(path.read_text())
+    except FileNotFoundError:
+        raise FileNotFoundError(f"recorded-pose stream does not exist: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"recorded-pose stream is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("recorded-pose stream must contain a JSON object")
+    return RecordedPoseStream.from_dict(payload)
+
+
+@dataclass
+class RecordedPoseCfg:
+    """Timestamp lookup and failure behavior for offline pose replay."""
+
+    path: str | None = None
+    interpolation: str = "linear"
+    out_of_range: str = "error"
+    max_sample_age_s: float | None = None
+    frame_transform: str = "identity"
+
+    def validate(self) -> None:
+        if self.interpolation not in {"linear", "previous"}:
+            raise ValueError("recorded-pose interpolation must be linear or previous")
+        if self.out_of_range not in {"error", "clamp", "lost"}:
+            raise ValueError("recorded-pose out_of_range must be error, clamp, or lost")
+        if self.frame_transform != "identity":
+            raise ValueError("recorded-pose frame_transform currently supports only identity")
+        if self.max_sample_age_s is not None:
+            if not np.isfinite(self.max_sample_age_s) or self.max_sample_age_s < 0.0:
+                raise ValueError("recorded-pose max_sample_age_s must be non-negative")
+
+
+class RecordedPoseProvider:
+    """Replay timestamped offline estimates without consuming update truth."""
+
+    def __init__(self, stream: RecordedPoseStream, cfg: RecordedPoseCfg) -> None:
+        cfg.validate()
+        self.stream = stream
+        self.cfg = cfg
+        self.parent_frame = stream.parent_frame
+        self.child_frame = stream.child_frame
+        self._pose: np.ndarray | None = None
+        self._covariance: np.ndarray | None = None
+        self._status: np.ndarray | None = None
+        self._estimate_timestamp_s: np.ndarray | None = None
+        self._last_query_timestamp_s: np.ndarray | None = None
+
+    def reset(
+        self,
+        packet: LocalizationPacket,
+        env_indices: np.ndarray,
+    ) -> PoseEstimate:
+        self._validate_packet(packet)
+        count = len(packet.timestamp_s)
+        indices = np.asarray(env_indices, dtype=np.int32)
+        if self._pose is None:
+            indices = np.arange(count, dtype=np.int32)
+            self._pose = np.zeros((count, 3), dtype=get_global_dtype())
+            self._covariance = np.zeros((count, 3, 3), dtype=get_global_dtype())
+            self._status = np.full(count, PoseStatus.UNINITIALIZED, dtype=np.uint8)
+            self._estimate_timestamp_s = np.zeros(count, dtype=np.float64)
+            self._last_query_timestamp_s = packet.timestamp_s.copy()
+        else:
+            assert self._last_query_timestamp_s is not None
+            unchanged = np.ones(count, dtype=bool)
+            unchanged[indices] = False
+            if np.any(packet.timestamp_s[unchanged] < self._last_query_timestamp_s[unchanged]):
+                raise ValueError("timestamps moved backward outside reset environments")
+            self._last_query_timestamp_s[indices] = packet.timestamp_s[indices]
+        self._assign_lookup(packet.timestamp_s[indices], indices)
+        return self._estimate()
+
+    def update(self, packet: LocalizationPacket) -> PoseEstimate:
+        self._validate_packet(packet)
+        if self._pose is None or self._last_query_timestamp_s is None:
+            raise RuntimeError("recorded-pose provider must be reset before update")
+        if np.any(packet.timestamp_s < self._last_query_timestamp_s):
+            raise ValueError("recorded-pose query timestamps must be monotonic")
+        indices = np.arange(len(packet.timestamp_s), dtype=np.int32)
+        self._assign_lookup(packet.timestamp_s, indices)
+        self._last_query_timestamp_s[:] = packet.timestamp_s
+        return self._estimate()
+
+    def _validate_packet(self, packet: LocalizationPacket) -> None:
+        if len(packet.timestamp_s) != self.stream.environment_count:
+            raise ValueError("recorded-pose environment count does not match packet batch")
+        if packet.ground_truth.child_frame != self.child_frame:
+            raise ValueError("recorded-pose child frame does not match sensor packet")
+
+    def _assign_lookup(self, query: np.ndarray, env_indices: np.ndarray) -> None:
+        pose, covariance, status, timestamp = self._lookup(query, env_indices)
+        assert self._pose is not None
+        assert self._covariance is not None
+        assert self._status is not None
+        assert self._estimate_timestamp_s is not None
+        self._pose[env_indices] = pose
+        self._covariance[env_indices] = covariance
+        self._status[env_indices] = status
+        self._estimate_timestamp_s[env_indices] = timestamp
+
+    def _lookup(
+        self,
+        query: np.ndarray,
+        env_indices: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        timestamps = self.stream.timestamps_s
+        timestamp_tolerance_s = 1.0e-9
+        below = query < timestamps[0] - timestamp_tolerance_s
+        above = query > timestamps[-1] + timestamp_tolerance_s
+        outside = below | above
+        if self.cfg.out_of_range == "error" and np.any(outside):
+            raise ValueError(
+                f"{int(np.count_nonzero(outside))} recorded-pose queries are out of range"
+            )
+        lookup_query = np.clip(query, timestamps[0], timestamps[-1])
+
+        if self.cfg.interpolation == "previous":
+            lower = np.searchsorted(timestamps, lookup_query, side="right") - 1
+            lower = np.clip(lower, 0, len(timestamps) - 1)
+            upper = lower.copy()
+            alpha = np.zeros(len(query), dtype=np.float64)
+            estimate_timestamp = timestamps[lower].copy()
+        else:
+            upper = np.searchsorted(timestamps, lookup_query, side="left")
+            upper = np.clip(upper, 0, len(timestamps) - 1)
+            lower = np.maximum(upper - 1, 0)
+            exact = timestamps[upper] == lookup_query
+            lower[exact] = upper[exact]
+            lower[below] = 0
+            upper[below] = 0
+            lower[above] = len(timestamps) - 1
+            upper[above] = len(timestamps) - 1
+            denominator = timestamps[upper] - timestamps[lower]
+            alpha = np.divide(
+                lookup_query - timestamps[lower],
+                denominator,
+                out=np.zeros(len(query), dtype=np.float64),
+                where=denominator > 0.0,
+            )
+            estimate_timestamp = np.where(
+                lower == upper,
+                timestamps[lower],
+                lookup_query,
+            )
+
+        pose0 = self.stream.pose[lower, env_indices]
+        pose1 = self.stream.pose[upper, env_indices]
+        covariance0 = self.stream.covariance[lower, env_indices]
+        covariance1 = self.stream.covariance[upper, env_indices]
+        weight = alpha[:, None]
+        pose = pose0.copy()
+        pose[:, :2] = pose0[:, :2] + weight * (pose1[:, :2] - pose0[:, :2])
+        yaw_delta = (pose1[:, 2] - pose0[:, 2] + np.pi) % (2.0 * np.pi) - np.pi
+        pose[:, 2] = (pose0[:, 2] + alpha * yaw_delta + np.pi) % (
+            2.0 * np.pi
+        ) - np.pi
+        covariance = covariance0 + alpha[:, None, None] * (
+            covariance1 - covariance0
+        )
+        status0 = self.stream.status[lower, env_indices]
+        status1 = self.stream.status[upper, env_indices]
+        valid0 = np.isin(status0, [PoseStatus.TRACKING, PoseStatus.DEGRADED])
+        valid1 = np.isin(status1, [PoseStatus.TRACKING, PoseStatus.DEGRADED])
+        status = np.maximum(status0, status1)
+        status[~(valid0 & valid1)] = PoseStatus.LOST
+
+        if self.cfg.out_of_range == "lost":
+            status[outside] = PoseStatus.LOST
+        if self.cfg.max_sample_age_s is not None:
+            stale = np.abs(query - estimate_timestamp) > self.cfg.max_sample_age_s
+            status[stale] = PoseStatus.LOST
+        return pose, covariance, status, estimate_timestamp
+
+    def _estimate(self) -> PoseEstimate:
+        assert self._pose is not None
+        assert self._covariance is not None
+        assert self._status is not None
+        assert self._estimate_timestamp_s is not None
+        valid = np.isin(
+            self._status,
+            np.array([PoseStatus.TRACKING, PoseStatus.DEGRADED], dtype=np.uint8),
+        )
+        return PoseEstimate(
+            pose=self._pose,
+            covariance=self._covariance,
+            valid=valid,
+            status=self._status,
+            timestamp_s=self._estimate_timestamp_s,
+            parent_frame=self.parent_frame,
+            child_frame=self.child_frame,
+        )
+
+
 @dataclass
 class LocalizationCfg:
     """Select and configure the navigation pose provider."""
@@ -518,19 +829,29 @@ class LocalizationCfg:
     child_frame: str = "base_link"
     noisy_pose: NoisyPoseCfg = field(default_factory=NoisyPoseCfg)
     dead_reckoning: DeadReckoningCfg = field(default_factory=DeadReckoningCfg)
+    recorded_pose: RecordedPoseCfg = field(default_factory=RecordedPoseCfg)
 
     def validate(self) -> None:
-        if self.provider not in {"ground_truth", "noisy_pose", "dead_reckoning"}:
+        if self.provider not in {
+            "ground_truth",
+            "noisy_pose",
+            "dead_reckoning",
+            "recorded_pose",
+        }:
             raise ValueError(
-                "localization provider must be ground_truth, noisy_pose, or dead_reckoning"
+                "localization provider must be ground_truth, noisy_pose, "
+                "dead_reckoning, or recorded_pose"
             )
         _validate_frame_pair(self.parent_frame, self.child_frame)
         self.noisy_pose.validate()
         self.dead_reckoning.validate()
+        self.recorded_pose.validate()
         if self.provider == "dead_reckoning" and self.parent_frame == "map":
             raise ValueError("dead-reckoning parent_frame must identify an odometry frame")
-        if self.provider != "dead_reckoning" and self.parent_frame != "map":
+        if self.provider in {"ground_truth", "noisy_pose"} and self.parent_frame != "map":
             raise ValueError("truth-derived localization parent_frame must be map")
+        if self.provider == "recorded_pose" and not self.recorded_pose.path:
+            raise ValueError("recorded-pose provider requires recorded_pose.path")
 
 
 def create_pose_provider(cfg: LocalizationCfg) -> PoseProvider:
@@ -547,8 +868,14 @@ def create_pose_provider(cfg: LocalizationCfg) -> PoseProvider:
             parent_frame=cfg.parent_frame,
             child_frame=cfg.child_frame,
         )
-    return DeadReckoningPoseProvider(
-        cfg.dead_reckoning,
-        parent_frame=cfg.parent_frame,
-        child_frame=cfg.child_frame,
-    )
+    if cfg.provider == "dead_reckoning":
+        return DeadReckoningPoseProvider(
+            cfg.dead_reckoning,
+            parent_frame=cfg.parent_frame,
+            child_frame=cfg.child_frame,
+        )
+    assert cfg.recorded_pose.path is not None
+    stream = read_recorded_pose_stream(cfg.recorded_pose.path)
+    if stream.parent_frame != cfg.parent_frame or stream.child_frame != cfg.child_frame:
+        raise ValueError("recorded-pose stream frames do not match localization config")
+    return RecordedPoseProvider(stream, cfg.recorded_pose)

@@ -12,8 +12,13 @@ from .localization import (
     PoseEstimate,
     PoseProvider,
     PoseStatus,
+    RecordedPoseCfg,
+    RecordedPoseProvider,
+    RecordedPoseStream,
     WheelOdometryPacket,
     create_pose_provider,
+    read_recorded_pose_stream,
+    write_recorded_pose_stream,
 )
 
 __unilab_registry_modules__ = (
@@ -32,6 +37,11 @@ __all__ = [
     "PoseEstimate",
     "PoseProvider",
     "PoseStatus",
+    "RecordedPoseCfg",
+    "RecordedPoseProvider",
+    "RecordedPoseStream",
     "WheelOdometryPacket",
     "create_pose_provider",
+    "read_recorded_pose_stream",
+    "write_recorded_pose_stream",
 ]

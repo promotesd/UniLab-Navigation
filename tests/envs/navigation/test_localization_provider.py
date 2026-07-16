@@ -1,5 +1,6 @@
 """Tests for the navigation localization provider contract."""
 
+import json
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -17,7 +18,12 @@ from unilab.envs.navigation import (
     NoisyPoseProvider,
     PoseEstimate,
     PoseStatus,
+    RecordedPoseCfg,
+    RecordedPoseProvider,
+    RecordedPoseStream,
     WheelOdometryPacket,
+    read_recorded_pose_stream,
+    write_recorded_pose_stream,
 )
 from unilab.envs.navigation.diff_drive import (
     DiffDrivePointGoalCfg,
@@ -78,6 +84,31 @@ def packet(
             angular_velocity=angular,
             frame_id=child_frame,
         ),
+    )
+
+
+def recorded_stream(
+    environment_count: int = 2,
+    *,
+    status: np.ndarray | None = None,
+) -> RecordedPoseStream:
+    timestamps = np.array([0.0, 0.1, 0.2])
+    pose = np.zeros((3, environment_count, 3), dtype=np.float32)
+    pose[:, :, 0] = np.array([0.0, 1.0, 2.0])[:, None]
+    pose[0, :, 2] = np.deg2rad(170.0)
+    pose[1, :, 2] = np.deg2rad(-170.0)
+    covariance = np.zeros((3, environment_count, 3, 3), dtype=np.float32)
+    covariance[:, :, 0, 0] = np.array([0.1, 0.2, 0.3])[:, None]
+    statuses = (
+        np.full((3, environment_count), PoseStatus.TRACKING, dtype=np.uint8)
+        if status is None
+        else status
+    )
+    return RecordedPoseStream(
+        timestamps_s=timestamps,
+        pose=pose,
+        covariance=covariance,
+        status=statuses,
     )
 
 
@@ -376,4 +407,218 @@ def test_registry_selects_configured_dead_reckoning_provider() -> None:
         state.info["localization_parent_frame"],
         ["odom", "odom"],
     )
+    env.close()
+
+
+def test_recorded_pose_stream_round_trips_and_rejects_tampering(tmp_path) -> None:
+    source = recorded_stream()
+    path = write_recorded_pose_stream(source, tmp_path / "recording.json")
+    restored = read_recorded_pose_stream(path)
+    np.testing.assert_array_equal(restored.timestamps_s, source.timestamps_s)
+    np.testing.assert_array_equal(restored.pose, source.pose)
+    np.testing.assert_array_equal(restored.covariance, source.covariance)
+    np.testing.assert_array_equal(restored.status, source.status)
+
+    payload = json.loads(path.read_text())
+    payload["pose"][0][0][0] = 99.0
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="sha256"):
+        read_recorded_pose_stream(path)
+
+
+def test_recorded_pose_stream_rejects_duplicate_timestamps() -> None:
+    source = recorded_stream()
+    with pytest.raises(ValueError, match="strictly increasing"):
+        RecordedPoseStream(
+            timestamps_s=np.array([0.0, 0.1, 0.1]),
+            pose=source.pose,
+            covariance=source.covariance,
+            status=source.status,
+        )
+
+
+def test_recorded_pose_provider_interpolates_by_timestamp_and_ignores_truth() -> None:
+    source = recorded_stream(environment_count=1)
+    source.status[1, 0] = PoseStatus.DEGRADED
+    provider = RecordedPoseProvider(source, RecordedPoseCfg(interpolation="linear"))
+    provider.reset(
+        packet(
+            np.array([0.0]),
+            np.array([0.0]),
+            np.zeros(1),
+            np.zeros(1),
+            np.array([[100.0, 100.0, 0.0]], dtype=np.float32),
+        ),
+        np.array([0], dtype=np.int32),
+    )
+    estimate = provider.update(
+        packet(
+            np.array([0.05]),
+            np.array([0.05]),
+            np.zeros(1),
+            np.zeros(1),
+            np.array([[-100.0, -100.0, 0.0]], dtype=np.float32),
+        )
+    )
+    np.testing.assert_allclose(estimate.pose[0, 0], 0.5, atol=1.0e-6)
+    assert abs(abs(float(estimate.pose[0, 2])) - np.pi) < 1.0e-5
+    np.testing.assert_allclose(estimate.covariance[0, 0, 0], 0.15)
+    assert estimate.status[0] == PoseStatus.DEGRADED
+    np.testing.assert_allclose(estimate.timestamp_s, [0.05])
+
+
+def test_recorded_pose_provider_defines_missing_stale_and_range_behavior() -> None:
+    statuses = np.full((3, 1), PoseStatus.TRACKING, dtype=np.uint8)
+    statuses[1, 0] = PoseStatus.LOST
+    source = recorded_stream(environment_count=1, status=statuses)
+    provider = RecordedPoseProvider(source, RecordedPoseCfg(interpolation="linear"))
+    provider.reset(
+        packet(np.array([0.0]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+        np.array([0], dtype=np.int32),
+    )
+    missing = provider.update(
+        packet(np.array([0.05]), np.full(1, 0.05), np.zeros(1), np.zeros(1), None)
+    )
+    assert missing.status[0] == PoseStatus.LOST
+    assert not missing.valid[0]
+
+    stale_provider = RecordedPoseProvider(
+        recorded_stream(environment_count=1),
+        RecordedPoseCfg(interpolation="previous", max_sample_age_s=0.04),
+    )
+    stale_provider.reset(
+        packet(np.array([0.0]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+        np.array([0], dtype=np.int32),
+    )
+    stale = stale_provider.update(
+        packet(np.array([0.05]), np.full(1, 0.05), np.zeros(1), np.zeros(1), None)
+    )
+    assert stale.status[0] == PoseStatus.LOST
+    np.testing.assert_allclose(stale.timestamp_s, [0.0])
+
+    with pytest.raises(ValueError, match="out of range"):
+        RecordedPoseProvider(source, RecordedPoseCfg(out_of_range="error")).reset(
+            packet(np.array([0.3]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+            np.array([0], dtype=np.int32),
+        )
+    endpoint = RecordedPoseProvider(
+        source,
+        RecordedPoseCfg(out_of_range="error"),
+    ).reset(
+        packet(
+            np.array([0.2 + 1.0e-13]),
+            np.zeros(1),
+            np.zeros(1),
+            np.zeros(1),
+            None,
+        ),
+        np.array([0], dtype=np.int32),
+    )
+    np.testing.assert_allclose(endpoint.pose[0], source.pose[-1, 0])
+    clamped = RecordedPoseProvider(
+        source,
+        RecordedPoseCfg(out_of_range="clamp"),
+    ).reset(
+        packet(np.array([0.3]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+        np.array([0], dtype=np.int32),
+    )
+    np.testing.assert_allclose(clamped.pose[0], source.pose[-1, 0])
+    lost = RecordedPoseProvider(source, RecordedPoseCfg(out_of_range="lost")).reset(
+        packet(np.array([0.3]), np.zeros(1), np.zeros(1), np.zeros(1), None),
+        np.array([0], dtype=np.int32),
+    )
+    assert lost.status[0] == PoseStatus.LOST
+
+
+def test_recorded_pose_provider_replays_partial_reset_timestamps_independently() -> None:
+    provider = RecordedPoseProvider(recorded_stream(), RecordedPoseCfg())
+    provider.reset(
+        packet(np.zeros(2), np.zeros(2), np.zeros(2), np.zeros(2), None),
+        np.array([0, 1], dtype=np.int32),
+    )
+    provider.update(
+        packet(
+            np.full(2, 0.1),
+            np.full(2, 0.1),
+            np.zeros(2),
+            np.zeros(2),
+            None,
+        )
+    )
+    reset = provider.reset(
+        packet(
+            np.array([0.0, 0.1]),
+            np.zeros(2),
+            np.zeros(2),
+            np.zeros(2),
+            None,
+        ),
+        np.array([0], dtype=np.int32),
+    )
+    np.testing.assert_allclose(reset.pose[:, 0], [0.0, 1.0])
+    updated = provider.update(
+        packet(
+            np.array([0.05, 0.2]),
+            np.array([0.05, 0.1]),
+            np.zeros(2),
+            np.zeros(2),
+            None,
+        )
+    )
+    np.testing.assert_allclose(updated.pose[:, 0], [0.5, 2.0])
+
+
+def test_recorded_pose_config_requires_path_and_identity_transform() -> None:
+    with pytest.raises(ValueError, match="requires recorded_pose.path"):
+        LocalizationCfg(provider="recorded_pose").validate()
+    with pytest.raises(ValueError, match="only identity"):
+        RecordedPoseCfg(frame_transform="map_to_odom").validate()
+
+
+def test_real_mujoco_recorded_pose_changes_observation_but_not_truth() -> None:
+    source = RecordedPoseStream(
+        timestamps_s=np.array([0.0, 0.1]),
+        pose=np.array([[[0.0, 0.0, 0.0]], [[0.5, 0.0, 0.0]]]),
+        covariance=np.zeros((2, 1, 3, 3)),
+        status=np.full((2, 1), PoseStatus.TRACKING),
+    )
+    env = DiffDrivePointGoalMujocoEnv(
+        cfg=DiffDrivePointGoalCfg(),
+        num_envs=1,
+        pose_provider=RecordedPoseProvider(source, RecordedPoseCfg()),
+    )
+    state = env.reset_to_initial_conditions(
+        np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        np.array([[1.0, 0.0]], dtype=np.float32),
+    )
+    np.testing.assert_allclose(state.obs["obs"][0, 0], 0.2)
+    next_state = env.step(np.array([[-1.0, 0.0]], dtype=np.float32))
+    np.testing.assert_allclose(next_state.info["localization_pose"], [[0.5, 0.0, 0.0]])
+    np.testing.assert_allclose(next_state.obs["obs"][0, 0], 0.1, atol=1.0e-5)
+    true_distance = np.linalg.norm(
+        next_state.info["goal_position"] - next_state.info["robot_state"][:, :2],
+        axis=1,
+    )
+    np.testing.assert_allclose(next_state.info["distance_to_goal"], true_distance)
+    assert abs(float(next_state.info["robot_state"][0, 0]) - 0.5) > 0.49
+    env.close()
+
+
+def test_registry_loads_recorded_pose_stream_from_nested_config(tmp_path) -> None:
+    path = write_recorded_pose_stream(recorded_stream(), tmp_path / "recording.json")
+    registry.ensure_registries()
+    env = registry.make(
+        "DiffDrivePointGoal",
+        sim_backend="mujoco",
+        env_cfg_override={
+            "localization": {
+                "provider": "recorded_pose",
+                "recorded_pose": {"path": str(path), "interpolation": "previous"},
+            }
+        },
+        num_envs=2,
+    )
+    assert isinstance(env.pose_provider, RecordedPoseProvider)
+    state = env.init_state()
+    np.testing.assert_allclose(state.info["localization_pose"][:, 0], 0.0)
     env.close()
