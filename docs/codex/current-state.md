@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M9 ROS2 and TurtleBot 4
+- Earliest incomplete milestone after this update: M10 framework-versus-standalone benchmark
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -808,15 +808,68 @@ report SHA-256: 14bd2b90d6e5474ec917a62b16f2b1dee81179c4d51a0a0cc36e9e87e8b318c0
 The smoke report remains under `/tmp` and is not committed. A live ROS graph is
 deliberately not required at this phase.
 
-## Next milestone: M9 ROS2 and TurtleBot 4
+## M9 ROS2 and TurtleBot 4
+
+Status: complete at the transport and contract layer; live hardware validation
+remains an external deployment activity.
+
+Delivered:
+
+- separately constructed and validated simulation and real-robot TurtleBot 4
+  profiles with topic names, frames, conservative project velocity limits,
+  command/scan timeouts, reset policy, and per-channel QoS;
+- exact PointGoal normalized-action to planar Twist mapping;
+- command timestamp validation and watchdog zero-command failsafe;
+- fixed-shape LaserScan conversion with stamp, age, frame, geometry, angular
+  coverage, range-limit, clipping, normalization, and per-beam validity;
+- deterministic resampling from ROS scan geometry into the existing fixed beam
+  contract;
+- episode start/stop/reset state machine that always publishes zero before
+  reset;
+- simulator reset-service requests and operator-confirmed real-robot reset with
+  no autonomous physical reset assumption;
+- transport protocol for command/reset publication plus an optional adapter
+  around an injected rclpy-compatible node and message/service types;
+- no ROS2 import requirement for core or bridge tests;
+- exact real MuJoCo velocity equivalence between the Twist bridge and the task;
+- combined transport-free command, odometry, LaserScan, and reset flow test.
+
+Bounded transport-free TurtleBot 4 MuJoCo session:
+
+- profile: simulation namespace `tb4`;
+- steps: `20`; policy commands plus watchdog/reset stops published: `22`;
+- topics: `/tb4/cmd_vel`, `/tb4/odom`, `/tb4/scan`,
+  `/tb4/reset_episode`;
+- all resampled `16`-beam scans valid and finite;
+- localization remained tracking;
+- watchdog timeout produced a zero command;
+- exactly one episode reset request;
+- goal distance after 20 steps: `1.2975 m` from an initial `2.0 m`.
+
+Validation:
+
+```text
+Ruff: clean
+focused TurtleBot 4 tests: 9 passed
+targeted TurtleBot 4/ROS2/MuJoCo tests: 23 passed
+complete navigation suite: 173 passed
+report: /tmp/unilab_m9_turtlebot4_smoke.json
+report SHA-256: 0a8cd10319da61c458c400400d80d221f95a40836acba69c5348b55492c6376d
+```
+
+The smoke report remains under `/tmp` and is not committed. No claim of live
+TurtleBot 4 hardware validation is made.
+
+## Next milestone: M10 framework-versus-standalone benchmark
 
 Required work:
 
-- add dependency-free Twist command, LaserScan, reset, and episode-control
-  contracts around the localization bridge;
-- separate simulation and real-robot configuration explicitly;
-- define TurtleBot 4 velocity limits, topic/frame names, QoS, scan geometry,
-  and timeout/failsafe behavior;
-- add an optional live transport adapter without importing ROS2 in core tests;
-- validate the complete command/odometry/LiDAR/reset flow with transport-free
-  TurtleBot 4 test doubles before requiring hardware.
+- implement a minimal standalone PointGoal MDP over the identical MuJoCo model
+  without UniLab registry/config/wrapper layers;
+- enforce the same physics/control timestep, environment count, reset
+  distribution, observation/action mapping, reward, network, optimizer,
+  rollout length, total steps, precision, device, and seeds;
+- warm up both paths, randomize measured execution order, and separate
+  simulator throughput from full training iteration timing;
+- report multiple repetitions, raw timings, mean/std, hardware/software
+  manifest, and framework overhead without generalizing beyond the protocol.
