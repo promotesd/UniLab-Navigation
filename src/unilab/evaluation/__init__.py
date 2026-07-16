@@ -7,6 +7,14 @@ from .algorithm_comparison import (
     parse_algorithm_run_spec,
     write_point_goal_algorithm_comparison,
 )
+from .localization_metrics import (
+    LocalizationTrace,
+    evaluate_localization_trace,
+    format_localization_metrics,
+    read_localization_trace,
+    write_localization_metrics,
+    write_localization_trace,
+)
 from .point_goal import (
     PointGoalManifest,
     PpoPointGoalPolicy,
@@ -36,6 +44,7 @@ from .trajectory_analysis import (
 
 __all__ = [
     "AlgorithmRunSpec",
+    "LocalizationTrace",
     "PointGoalManifest",
     "PpoCheckpointSpec",
     "PpoPointGoalPolicy",
@@ -45,7 +54,9 @@ __all__ = [
     "build_point_goal_ppo_policy_factory",
     "evaluate_point_goal_policies",
     "evaluate_point_goal_policy",
+    "evaluate_localization_trace",
     "format_point_goal_summary",
+    "format_localization_metrics",
     "format_point_goal_algorithm_comparison",
     "generate_point_goal_manifest",
     "format_ppo_sweep_summary",
@@ -54,8 +65,11 @@ __all__ = [
     "parse_algorithm_run_spec",
     "ppo_algo_config_dict",
     "read_point_goal_manifest",
+    "read_localization_trace",
     "write_point_goal_manifest",
     "write_point_goal_algorithm_comparison",
     "write_point_goal_report",
     "write_point_goal_trajectory_svg",
+    "write_localization_metrics",
+    "write_localization_trace",
 ]

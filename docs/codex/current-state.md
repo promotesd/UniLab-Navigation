@@ -958,7 +958,7 @@ Actual one-command quick workflow:
 - zero/random/heuristic success: `0.0 / 0.0 / 1.0`;
 - quick benchmark: `32` environments, `8` steps, seeds `101/202/303`, two
   measured repetitions per seed after warmup;
-- repository audit: passed, `1,157` tracked files, zero tracked generated
+- repository audit: passed, `1,162` tracked files, zero tracked generated
   artifacts;
 - `uv.lock` SHA-256:
   `2e8f266c38ab35c6ff43a2097e915c124d5ec22f5f1506bbfd3758701a2aff9c`;
@@ -968,25 +968,75 @@ Validation and evidence:
 
 ```text
 focused M11 tests: 6 passed
-quick evaluation: /tmp/unilab_m11_repro/quick/evaluation.json
-quick evaluation SHA-256: 54d1b3661676885cce205b7d0e0448922c312a886896319fde18176b11bbc0f9
-quick benchmark: /tmp/unilab_m11_repro/quick/benchmark.json
-quick benchmark SHA-256: 9327e36bb410eb92028fbd7f3659a78932b5d94460f06d5c8a591a8ce85ced88
-audit: /tmp/unilab_m11_repro/quick/audit.json
-audit SHA-256: c7fe4bbb10616866fe1293be22e58d35c56be9534d0891a7eafde3f0ba789ea8
-provenance JSON SHA-256: 225d53162c64098a22f4a19de5103ad92897632d1a8abeb56d1a7ca4c58857f4
-provenance CSV SHA-256: e42d3703e234543b30928465761e1ec9dc4d829671f62f50f75dc885727eab48
+clean worktree: commit 209a6052eae018ac36d53cd1385de6888b772cc6
+quick evaluation: /tmp/unilab_m11_clean_verified/quick/evaluation.json
+quick evaluation SHA-256: e4961dd76e418cb7849dd43b84592321f3617d5db1360311c04eb8bde0f93ff6
+quick benchmark: /tmp/unilab_m11_clean_verified/quick/benchmark.json
+quick benchmark SHA-256: 57886f3f0ad933debe593902628f93b9e9dcc270bb89e61045babc25d0005134
+audit: /tmp/unilab_m11_clean_verified/quick/audit.json
+audit SHA-256: e407a65f2d10b5ae1f3410c7756fd4ee88b421e3a665b42eaae73b471299882f
+provenance JSON SHA-256: 485112ec7123ee3de7bda5dc210e1fdbaed2c6f5f45a35a68beef0e638fba3cc
+provenance CSV SHA-256: 265ca773978868ba3b01571d399af333f47b79448654718b509cf4310a380b9b
 ```
 
-The recorded provenance correctly marks the development checkout dirty because
-it was generated before the M11 commit and because a pre-existing user-owned
-skill edit remains outside milestone scope. A final clean-worktree-equivalent
-quick run is performed after the M11 commit. All workflow output remains under
-`/tmp` and is not committed.
+The final detached-worktree provenance reports `dirty: false` at the exact M11
+commit. All workflow output remains under `/tmp` and is not committed.
+
+## Cross-cutting SLAM/localization metrics
+
+Status: complete. This deliverable closes the localization-quality metric set
+named explicitly in the project objective but not separated as a numbered M8
+phase in the roadmap.
+
+Delivered:
+
+- hashed, versioned batched trace schema with query timestamps, truth pose,
+  estimate pose, covariance, status, estimate timestamps, and explicit frames;
+- translation and yaw absolute trajectory error (ATE) RMSE;
+- one-step planar SE(2) translation and yaw relative pose error (RPE) RMSE;
+- final translation drift per traveled truth meter and truth path length;
+- per-environment unique-estimate update rate;
+- estimate latency and localization dropout rate;
+- covariance normalized estimation error squared (NEES), calibrated sample
+  count, and 95% chi-square coverage;
+- strict timestamp/frame/covariance/status validation, JSON tamper detection,
+  console summary, and machine-readable JSON CLI;
+- analytical identity, offset, scale, dropout, latency, update-rate,
+  serialization, and invalid-timestamp tests;
+- real MuJoCo dead-reckoning integration trace and bounded CLI analysis.
+
+Real MuJoCo metric evidence:
+
+- environments/steps: `32 / 100`; seed `11901`;
+- update rate `10.0 Hz`; latency `0.0 s`; dropout `0.0`;
+- translation ATE `0.216440 m` RMSE;
+- translation RPE `0.004983 m` RMSE;
+- drift `0.162334` per truth meter;
+- mean NEES `737.494664`; 95% coverage `0.0053125`.
+
+The very high NEES and low coverage show that this simple dead-reckoning
+covariance model is severely overconfident. The unfavorable calibration result
+is retained rather than tuned away after observation.
+
+Validation:
+
+```text
+Ruff: clean
+focused localization metric tests: 6 passed
+targeted metric/localization/MuJoCo tests: 38 passed
+complete navigation suite: 187 passed
+trace: /tmp/unilab_slam_metrics_trace.json
+trace internal SHA-256: c8133c155cd3e16d705f18caa60b952eea2346e52f48f7a190d604178673ad66
+trace file SHA-256: 1ae24b08d60cf16fe64cf9716dabd046160cf5d824dd650d93174878dc063049
+report: /tmp/unilab_slam_metrics_report.json
+report SHA-256: 114a7f48962ed8e3a6f7966ecb3856bf1e92e92e0f730c503b53983cb2f6bfc6
+```
+
+The trace and report remain under `/tmp` and are not committed.
 
 ## Roadmap status
 
-M5.1 through M11 are implemented, validated with bounded real MuJoCo evidence,
-committed milestone by milestone, and pushed on `feat/navigation-mvp`. Future
-work should begin from a new roadmap rather than silently extending these
-acceptance criteria.
+M5.1 through M11 plus the explicit cross-cutting SLAM metric contract are
+implemented and validated with bounded real MuJoCo evidence. Future work should
+begin from a new roadmap rather than silently extending these acceptance
+criteria.
