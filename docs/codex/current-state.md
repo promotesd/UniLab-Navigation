@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 - Remote: `git@github.com:promotesd/UniLab-Navigation.git`
 - M5.1 episode metrics: complete in `f068ebdd`
 - M5.2 fixed-episode evaluator: complete in `cbac3705`
-- Earliest incomplete milestone after this update: M10 framework-versus-standalone benchmark
+- Earliest incomplete milestone after this update: M11 reproducibility
 
 Completion is based on source, tests, commit history, and bounded real MuJoCo
 runs rather than roadmap labels alone.
@@ -860,16 +860,78 @@ report SHA-256: 0a8cd10319da61c458c400400d80d221f95a40836acba69c5348b55492c6376d
 The smoke report remains under `/tmp` and is not committed. No claim of live
 TurtleBot 4 hardware validation is made.
 
-## Next milestone: M10 framework-versus-standalone benchmark
+## M10 framework-versus-standalone benchmark
+
+Status: complete for one controlled CPU workload.
+
+Delivered:
+
+- minimal standalone PointGoal MDP loop sharing only the same MuJoCo engine
+  adapter and exact robot scene, without UniLab registry, task config,
+  `NpEnv`, localization, info/logging, autoreset, or observation wrappers;
+- independent action mapping, wheel kinematics, pose extraction, PointGoal
+  observation, reward, success, timeout, and state ownership;
+- real MuJoCo numerical equivalence test covering reset plus six steps across
+  eight environments, with observations, rewards, terminals, physical pose,
+  and wheel commands equal within tolerance;
+- strict paired-run aggregation rejecting missing/duplicate pairs, non-finite
+  timing, and differing framework/standalone reward checksums;
+- identical model file/hash, physics/control timestep, fixed chunk size,
+  environment count, reset manifest, action sequence, network initialization,
+  network, Adam optimizer, loss, rollout length, CPU device, FP32 precision,
+  and Torch thread count;
+- two discarded warmup repetitions per seed;
+- deterministic randomized path order for five measured repetitions under each
+  of three seeds (`101`, `202`, `303`);
+- separate simulator-only and policy-forward-plus-Adam iteration timings;
+- raw paired timings, measurement order, mean/std, Git SHA, model SHA, and
+  software/hardware manifest in strict JSON.
+
+Formal protocol:
+
+- environments: `256`; rollout: `32` control steps (`8,192` transitions);
+- measured pairs: `15` per path after warmup;
+- network: `5 -> 64 -> 64`, tanh actor (`2`) and scalar value head;
+- optimizer: Adam, learning rate `3e-4`;
+- device/precision: CPU / FP32; Torch threads: `1`;
+- MuJoCo `3.8.0`; fixed backend chunk size `8`;
+- model SHA-256:
+  `636a05892c1b4924771fed7a9e5e4dad99f2b67c3a8f2d2a6ce0f30bdb412639`;
+- maximum paired reward-checksum difference: `0.0`.
+
+| Path | Simulator steps/s mean ± std | Training steps/s mean ± std | Simulator seconds mean ± std | Training seconds mean ± std |
+| --- | ---: | ---: | ---: | ---: |
+| UniLab framework | 68,054.5 ± 1,700.3 | 59,981.3 ± 1,368.8 | 0.1205 ± 0.0030 | 0.1366 ± 0.0031 |
+| Standalone | 73,565.5 ± 1,380.2 | 64,704.8 ± 1,633.0 | 0.1114 ± 0.0021 | 0.1267 ± 0.0033 |
+
+Under this protocol, the framework added `8.13%` simulator-path time and
+`7.86%` full iteration time. This is a workload-specific overhead measurement,
+not a claim that either implementation is universally faster.
+
+Validation:
+
+```text
+Ruff: clean
+standalone numerical/schema tests: 2 passed
+targeted M10 MuJoCo/evaluator tests: 14 passed
+complete navigation suite: 175 passed
+report: /tmp/unilab_m10_framework_vs_standalone.json
+report SHA-256: d6c468acef47319b3e6cf159bcb1153199a794571ce679a656b0383d2723012f
+```
+
+All raw benchmark output remains under `/tmp` and is not committed.
+
+## Next milestone: M11 reproducibility
 
 Required work:
 
-- implement a minimal standalone PointGoal MDP over the identical MuJoCo model
-  without UniLab registry/config/wrapper layers;
-- enforce the same physics/control timestep, environment count, reset
-  distribution, observation/action mapping, reward, network, optimizer,
-  rollout length, total steps, precision, device, and seeds;
-- warm up both paths, randomize measured execution order, and separate
-  simulator throughput from full training iteration timing;
-- report multiple repetitions, raw timings, mean/std, hardware/software
-  manifest, and framework overhead without generalizing beyond the protocol.
+- provide environment lock/setup instructions and one-command smoke, training,
+  evaluation, fair-algorithm, and framework-benchmark workflows;
+- capture Git, model/config, software, hardware, seeds, precision, device,
+  manifests, checkpoints, raw outputs, and hashes consistently;
+- add a reproducibility audit that rejects missing provenance and generated
+  artifacts inside the repository;
+- document expected runtime/resource bounds and separate quick CI from formal
+  experiments;
+- run the clean-checkout-equivalent command sequence and close the roadmap only
+  when every milestone has source, tests, bounded evidence, commit, and push.
